@@ -44,7 +44,6 @@ def _player_json(p, b, surv=None):
         "tier": p.tier, "injury": p.injury_status,
         "depth": p.depth_chart_order, "survival": surv,
         "age": p.age, "headshot": p.headshot, "team_logo": p.team_logo,
-        "overall_rank": p.overall_rank, "pos_rank": p.pos_rank,
         "predicted_rank": p.predicted_rank, "last_year_rank": p.last_year_rank,
         "predicted_rank_overall": p.predicted_rank_overall,
         "last_year_rank_overall": p.last_year_rank_overall,
@@ -154,7 +153,8 @@ def snapshot():
     rec_objs = recommend(st, b.players, cfg, limit=8)
     shares = value_share(rec_objs)
     try:
-        odds = {o.key: o for o in simulate(st, b.players, cfg, [r.player for r in rec_objs])}
+        odds = {o.key: o for o in
+                simulate(st, b.players, cfg, [r.player for r in rec_objs], hazards=hazards)}
     except Exception:  # noqa: BLE001 - the analytic score always stands on its own
         odds = {}
 

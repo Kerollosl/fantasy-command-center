@@ -31,7 +31,7 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from ..config import LeagueConfig
-from .lineup import optimal_lineup
+from .lineup import bye_conflicts, optimal_lineup
 from .needs import starter_gaps
 
 DEFAULT_SIMS = 320
@@ -90,8 +90,18 @@ def simulate(
     horizon: int = DEFAULT_HORIZON,
     rng: np.random.Generator | None = None,
     budget: float = TIME_BUDGET,
+    hazards: dict[str, float] | None = None,
 ) -> list[PickOdds]:
-    """Probability that each candidate is the right pick right now."""
+    """Probability that each candidate is the right pick right now.
+
+    `hazards` is the same per-position pace multiplier the rest of the app
+    already fits from picks actually entered (see draft.survival). Without it
+    the simulated opponents draft purely off FFC's preseason ADP even mid-run
+    -- so during a real positional run the single most important number this
+    tool produces would contradict the tool's own better information, for no
+    reason other than one code path having access to what was learned and
+    another not asking for it.
+    """
     rng = rng or np.random.default_rng()
     started = time.perf_counter()
 
@@ -102,6 +112,13 @@ def simulate(
     idx = {p.key: i for i, p in enumerate(pool)}
     adp = np.array([p.adp if p.adp is not None else 400.0 for p in pool], dtype=float)
     sd = np.array([max(p.adp_stdev or 1.0, 0.5) for p in pool], dtype=float)
+
+    if hazards:
+        # A position going faster than market (hazard > 1) is effectively
+        # being drafted earlier than its listed ADP; scale each player's
+        # perceived pick time down (up) accordingly before the noise is added.
+        lam = np.array([hazards.get(p.position, 1.0) or 1.0 for p in pool], dtype=float)
+        adp = adp / np.clip(lam, 0.35, 3.0)
 
     order = state._order
     start = state.current_pick
@@ -152,7 +169,11 @@ def simulate(
             # Unfilled starters are credited identically across candidates, so
             # they cannot decide the comparison -- only the players differ.
             gaps = sum(starter_gaps(cfg, _roster_positions(mine)).values())
-            scores[ci, s] = pts - gaps * 1e-6
+            # Same bye-pileup penalty the draft grade already applies -- a
+            # roster stacked three-deep on one bye week is a worse team even
+            # when its raw projected total looks fine.
+            bye_penalty = sum(4.0 * (n - 2) for n in bye_conflicts(mine, cfg).values())
+            scores[ci, s] = pts - bye_penalty - gaps * 1e-6
         completed += 1
 
     if completed == 0:

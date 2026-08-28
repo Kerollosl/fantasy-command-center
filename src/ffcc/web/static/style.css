@@ -390,10 +390,41 @@ tbody tr.cliff td{border-bottom:1px solid var(--warning)}
 .drow i b{display:block;height:100%;background:var(--seq-4);border-radius:3px}
 .drow em{font-style:normal;text-align:right;color:var(--fg-2);
   font-variant-numeric:tabular-nums}
-.pfbtn{margin-top:10px;width:100%;padding:7px;border-radius:var(--r);
+.pfbtn{padding:7px;border-radius:var(--r);flex:1;
   background:var(--s2);border:1px solid var(--line);color:var(--fg-2);font-size:11.5px}
 .pfbtn:hover{background:var(--s3);color:var(--fg)}
+.herobtns{display:flex;gap:6px;margin-top:10px}
 .rec .prob{color:var(--good)}
+
+/* ─── quick draft: fast path for a real, clock-driven draft ─────────────
+   Hidden until the row is touched (hover or keyboard focus) so it costs
+   nothing visually at rest, but one click drafts instantly -- no profile
+   detour -- for when picks are coming faster than that detour affords. */
+.qdraft{display:inline-flex;align-items:center;justify-content:center;
+  width:22px;height:22px;border-radius:50%;flex:none;
+  background:var(--good);color:#08150c;font-size:12px;font-weight:800;line-height:1;
+  opacity:0;transform:scale(.85);
+  transition:opacity var(--dur-fast) var(--ease-out),transform var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out)}
+.qdraft:hover{background:#57cc76}
+.qdraft:active{transform:scale(.92)}
+.qcol{width:26px;padding:0 4px !important;text-align:center}
+tbody tr:hover .qdraft,tbody tr:focus-within .qdraft{opacity:1;transform:scale(1)}
+/* Overlays the rank digit rather than the value numbers on the right -- that
+   digit is purely redundant with the row's own position in the list, so
+   briefly covering it costs nothing, where covering a value number would
+   hide the thing the row exists to show. */
+.qdraft-inline{position:absolute;left:6px;top:50%;transform:translateY(-50%) scale(.85)}
+.cmprow:hover .qdraft-inline,.cmprow:focus-within .qdraft-inline,
+.rec:hover .qdraft-inline,.rec:focus-within .qdraft-inline{opacity:1;transform:translateY(-50%) scale(1)}
+.cmprow:hover .cmprk,.cmprow:focus-within .cmprk,
+.rec:hover .rk,.rec:focus-within .rk{opacity:0}
+.cmprow,.rec{position:relative}
+.cmprk,.rk{transition:opacity var(--dur-fast) var(--ease-out)}
+/* The hero's own quick-draft is a persistent, deliberate second action next
+   to "View full profile" -- not hover-hidden, since this single top card
+   deserves an always-visible fast path, unlike a list of many rows. */
+.qdraft-hero{opacity:1;transform:none;width:38px;height:38px;font-size:16px;flex:none}
 
 /* ─── profile panel ──────────────────────────────────────────── */
 .profilewrap{position:fixed;inset:0;z-index:200;background:rgba(6,9,12,0);
@@ -449,6 +480,8 @@ tbody tr.cliff td{border-bottom:1px solid var(--warning)}
 
 /* ─── compare panel: top candidates, big colored numbers ────────── */
 .compare{display:flex;flex-direction:column;gap:6px;margin-bottom:9px}
+.cmplegend{font-size:10px;color:var(--fg-4);line-height:1.5;margin-bottom:2px}
+.cmplegend b{color:var(--fg-3);font-weight:660}
 .cmprow{display:grid;grid-template-columns:16px 30px 1fr 46px 46px;align-items:center;
   gap:10px;width:100%;text-align:left;padding:9px 10px;border-radius:var(--r);
   background:var(--s1);border:1px solid var(--line-soft);cursor:pointer;

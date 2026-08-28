@@ -173,6 +173,26 @@ document.addEventListener("pointerout", (e) => {
 });
 // Delegated rather than wired per-block: the ladder is rebuilt on every
 // render, so binding here once covers every square without re-attaching.
+// Quick draft: a small always-there-on-hover control so a real, fast-moving
+// draft (autopick counting down, ten people ahead of you) never requires the
+// profile-panel detour. One delegated handler covers every surface that
+// renders one, so no per-render wiring is needed.
+function quickDraftBtn(key, cls = "qdraft") {
+  return `<button type="button" class="${cls}" data-qdraft="${esc(key)}"
+    title="Draft instantly" aria-label="Draft instantly">✓</button>`;
+}
+// Capture phase, deliberately: a quick-draft button sits INSIDE a row that
+// has its own bubble-phase click handler (open the profile). Bubble-phase
+// stopPropagation() here would run too late -- the row's handler, attached
+// directly on the row, fires on the way up before a same-phase document
+// listener ever sees the event. Capture fires top-down, ahead of it.
+document.addEventListener("click", (e) => {
+  const q = e.target.closest("[data-qdraft]");
+  if (!q) return;
+  e.preventDefault();
+  e.stopPropagation();
+  draft(q.dataset.qdraft);
+}, true);
 document.addEventListener("click", (e) => {
   const blk = e.target.closest(".ladderblk");
   if (blk && blk.dataset.key) openProfile(blk.dataset.key);
@@ -500,7 +520,10 @@ function renderHero() {
         ${top.warnings.length ? `<ul class="reasons">
           ${top.warnings.map((w) => `<li class="w">${esc(w)}</li>`).join("")}</ul>` : ""}
       </div>
-      <button class="pfbtn" data-profile="${esc(top.key)}">View full profile</button>
+      <div class="herobtns">
+        <button class="pfbtn" data-profile="${esc(top.key)}">View full profile</button>
+        ${quickDraftBtn(top.key, "qdraft qdraft-hero")}
+      </div>
     </div>`;
   const h = $("hero").firstElementChild;
   h.querySelector(".pfbtn").onclick = (e) => { e.stopPropagation(); openProfile(top.key); };
@@ -511,29 +534,41 @@ function renderHero() {
   // players, as large colored numbers rather than thin bars, so a close call
   // between two or three real options is visible at a glance -- already
   // ordered by the number each row displays (the simulated probability).
-  $("compare").innerHTML = top4.map((r, i) => {
-    const sim = r.pick_prob, val = r.value_share;
-    const simLeads = sim != null && val != null && sim >= val;
-    const flashKey = "cmp:" + r.key;
-    const justChanged = flashSeen.has(flashKey) && flashSeen.get(flashKey) !== sim;
-    flashSeen.set(flashKey, sim);
-    return `<button class="cmprow ${i === 0 ? "lead" : ""} ${justChanged ? "flash" : ""}" data-key="${esc(r.key)}">
-      <span class="cmprk">${i + 1}</span>
-      ${avatar(r, 30)}
-      <span class="cmpname"><b>${esc(r.name)}</b><span class="pos ${r.pos}">${r.pos}</span></span>
-      <span class="cmpnum ${simLeads ? "big" : ""}">
-        <b class="tnum" style="color:var(--good)">${sim != null ? pct(sim) + "%" : "—"}</b>
-        <span>sim</span></span>
-      <span class="cmpnum ${!simLeads ? "big" : ""}">
-        <b class="tnum" style="color:var(--accent)">${val != null ? pct(val) + "%" : "—"}</b>
-        <span>value</span></span>
-    </button>`;
-  }).join("");
-  [...$("compare").children].forEach((el) =>
-    (el.onclick = () => openProfile(el.dataset.key)));
+  //
+  // "Best" and "Model" are named to match vocabulary already used elsewhere
+  // (the slim list below already says "best pick" for this exact number) and
+  // to be readable without hovering, since a bare "sim"/"value" pairing was
+  // reported confusing and a tooltip alone wasn't fixing that.
+  $("compare").innerHTML = `
+    <p class="cmplegend"><b>Best</b> = wins the simulated draft most often ·
+      <b>Model</b> = this tool's raw value ranking, before simulating anything</p>
+    ${top4.map((r, i) => {
+      const sim = r.pick_prob, val = r.value_share;
+      const simLeads = sim != null && val != null && sim >= val;
+      const flashKey = "cmp:" + r.key;
+      const justChanged = flashSeen.has(flashKey) && flashSeen.get(flashKey) !== sim;
+      flashSeen.set(flashKey, sim);
+      return `<div class="cmprow ${i === 0 ? "lead" : ""} ${justChanged ? "flash" : ""}"
+          role="button" tabindex="0" data-key="${esc(r.key)}">
+        <span class="cmprk">${i + 1}</span>
+        ${avatar(r, 30)}
+        <span class="cmpname"><b>${esc(r.name)}</b><span class="pos ${r.pos}">${r.pos}</span></span>
+        <span class="cmpnum ${simLeads ? "big" : ""}" title="Share of simulated drafts where taking him now produced your best team">
+          <b class="tnum" style="color:var(--good)">${sim != null ? pct(sim) + "%" : "—"}</b>
+          <span>best</span></span>
+        <span class="cmpnum ${!simLeads ? "big" : ""}" title="How strongly the value model favors him over these alternatives, before simulating anything">
+          <b class="tnum" style="color:var(--accent)">${val != null ? pct(val) + "%" : "—"}</b>
+          <span>model</span></span>
+        ${quickDraftBtn(r.key, "qdraft qdraft-inline")}
+      </div>`;
+    }).join("")}`;
+  [...$("compare").querySelectorAll(".cmprow")].forEach((el) => {
+    el.onclick = () => openProfile(el.dataset.key);
+    el.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openProfile(el.dataset.key); } };
+  });
 
   $("recs").innerHTML = slim.map((r, i) => `
-    <button class="rec" data-key="${esc(r.key)}">
+    <div class="rec" role="button" tabindex="0" data-key="${esc(r.key)}">
       <span class="rk">${i + 5}</span>
       ${avatar(r, 26)}
       <span class="pos ${r.pos}">${r.pos}</span>
@@ -541,9 +576,12 @@ function renderHero() {
       <span class="rt">${r.pick_prob != null
         ? `<b class="tnum prob">${pct(r.pick_prob)}%</b><span>best pick</span>`
         : `<b class="tnum">${signed(r.vona)}</b><span>vs next ${r.pos}</span>`}</span>
-    </button>`).join("");
-  [...$("recs").children].forEach((el) =>
-    (el.onclick = () => openProfile(el.dataset.key)));
+      ${quickDraftBtn(r.key, "qdraft qdraft-inline")}
+    </div>`).join("");
+  [...$("recs").children].forEach((el) => {
+    el.onclick = () => openProfile(el.dataset.key);
+    el.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openProfile(el.dataset.key); } };
+  });
 }
 
 // Tier ladder — the scarcity read. Each block group is a tier of remaining
@@ -584,9 +622,15 @@ function renderLadder() {
 
 function sortRows(rows) {
   const { key, dir } = sortState;
+  const singlePos = posFilter !== "ALL" && posFilter !== "FLEX";
+  // These two columns display a different underlying field depending on the
+  // filter (overall vs. positional) -- sorting must follow whichever number
+  // is actually on screen, or the column header's arrow would lie.
+  const OVERALL_SWAP = { predicted_rank: "predicted_rank_overall", last_year_rank: "last_year_rank_overall" };
   const val = (p) => {
     if (key === "name" || key === "pos" || key === "team") return (p[key] || "").toLowerCase();
-    const v = p[key];
+    const field = !singlePos && OVERALL_SWAP[key] ? OVERALL_SWAP[key] : key;
+    const v = p[field];
     return v == null ? (dir === 1 ? Infinity : -Infinity) : v;   // nulls sort last either way
   };
   return [...rows].sort((a, b) => {
@@ -625,7 +669,7 @@ function renderBoard() {
     posFilter === "ALL" ? true : posFilter === "FLEX" ? flexPos.includes(p.pos) : p.pos === posFilter
   ).slice(0, 90);
   if (!filtered.length) {
-    $("board").innerHTML = `<tr><td colspan="14"><div class="empty-state">No ${posFilter} players left.</div></td></tr>`;
+    $("board").innerHTML = `<tr><td colspan="13"><div class="empty-state">No ${posFilter} players left.</div></td></tr>`;
     return;
   }
   // Tier-cliff dividers mean something whenever row order tracks tier
@@ -657,11 +701,10 @@ function renderBoard() {
       ? `<img class="tlogo" src="/logos/${esc(p.team_logo)}" width="18" height="18" alt="${esc(p.team)}" title="${esc(p.team)}" loading="lazy">`
       : `<span class="mut">${esc(p.team)}</span>`;
     return `<tr class="postint ${p.pos} ${cliff ? "cliff" : ""}" data-key="${esc(p.key)}" data-team="${esc(p.team)}">
+      <td class="qcol">${quickDraftBtn(p.key)}</td>
       <td><span class="pname">${avatar(p, 22)}${esc(p.name)}${flag}</span></td>
       <td>${p.pos}</td>
       <td>${teamCell}</td>
-      <td class="num mut tnum">${p.overall_rank ?? "—"}</td>
-      <td class="num mut tnum">${p.pos_rank ?? "—"}</td>
       <td class="num mut tnum">${(singlePos ? p.predicted_rank : p.predicted_rank_overall) ?? "—"}</td>
       <td class="num mut tnum">${(singlePos ? p.last_year_rank : p.last_year_rank_overall) ?? "—"}</td>
       <td class="num mut tnum">${p.age ?? "—"}</td>

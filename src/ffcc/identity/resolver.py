@@ -62,8 +62,6 @@ class Player:
 
     # Board-wide rank context, filled in by projections.vor.attach_ranks and
     # projections.blend.attach_projections.
-    overall_rank: int | None = None      # by VOR, among every draftable player
-    pos_rank: int | None = None          # by VOR, within position
     predicted_rank: int | None = None    # this season's positional rank by ADP
     last_year_rank: int | None = None    # positional finish rank, most recent completed season
     predicted_rank_overall: int | None = None   # this season's rank by ADP, all positions

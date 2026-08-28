@@ -91,3 +91,23 @@ def test_value_share_sums_to_one_and_favours_the_higher_score():
     shares = value_share(recs)
     assert sum(shares.values()) == pytest.approx(1.0, abs=1e-3)
     assert shares[players[0].key] > shares[players[1].key]
+
+
+def test_hazards_shift_the_simulated_probability():
+    """Without this, the simulation ignores a real positional run happening
+    in front of it and can contradict the tool's own survival numbers, which
+    already adapt to exactly this signal."""
+    cfg, players = load_league(), board()
+    st = DraftState(cfg)
+    candidates = players[:4]
+    base = {o.key: o.probability
+            for o in simulate(st, players, cfg, candidates, sims=150,
+                              rng=np.random.default_rng(7))}
+    hot = {o.key: o.probability
+           for o in simulate(st, players, cfg, candidates, sims=150,
+                             rng=np.random.default_rng(7),
+                             hazards={"RB": 1.8, "WR": 0.5})}
+    # An RB candidate should look meaningfully less safe to wait on once RBs
+    # are known to be flying off the board faster than their ADP suggests.
+    rb = next(c for c in candidates if c.position == "RB")
+    assert hot[rb.key] != base[rb.key]

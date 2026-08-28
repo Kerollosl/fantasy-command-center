@@ -8,6 +8,11 @@ Built on free, public data only — no paid API keys, no scraping.
 
 ![Draft board](docs/board.png)
 
+The tier ladder across the top is the fastest read on the page: how many players
+are left at the current value, and how far the drop is once they're gone.
+
+![Draft grid](docs/grid.png)
+
 ---
 
 ## Why it exists
@@ -70,6 +75,27 @@ so a network problem mid-draft degrades to stale data rather than a dead tool.
 ```bash
 ffcc board --pos RB --limit 30     # print the board to a terminal
 ```
+
+## Reading the board
+
+**Tier ladder.** One lane per skill position. Blocks are the players still
+available, grouped by tier; the gaps are the value cliffs. "1 left, then −43
+pts" is the whole argument for taking a quarterback now rather than in two
+rounds. DEF and K are excluded — they have no meaningful tiers.
+
+**Value bars.** Value over replacement, drawn as length. Scanning a column of
+bars is faster than comparing numbers under a clock.
+
+**Lasts-to-my-pick meters.** Survival probability on a sequential ramp. It is a
+magnitude, not a status, so it never borrows the reserved warning colors — and
+it is measured against the pick that waiting actually costs you, not the next
+pick in a back-to-back turn.
+
+**Draft pace.** How fast each position is leaving relative to market ADP, with
+1.00× as the centre line. Above it, that position is running hot.
+
+**Draft grid.** Every pick as rounds × teams with your column highlighted — the
+quickest way to see a positional run forming.
 
 ## Using it live
 

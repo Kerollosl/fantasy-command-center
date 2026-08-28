@@ -10,7 +10,7 @@ from fastapi.staticfiles import StaticFiles
 
 from ..draft.grade import grade_all
 from ..draft.needs import starter_gaps
-from ..draft.recommend import recommend
+from ..draft.recommend import _decision_horizon, recommend
 from ..draft.survival import positional_hazards, survival_prob
 from ..engine import build_board
 
@@ -37,16 +37,84 @@ def _player_json(p, b, surv=None):
     }
 
 
+def _scarcity(state, players, cfg, hazards, my_next):
+    """Remaining players grouped by tier, per position.
+
+    This is what the tier ladder draws. The number that actually drives a draft
+    decision is not a player's rank but how many are left before the next cliff
+    -- "two RBs left in this tier" is the whole argument for taking one now.
+    """
+    avail = state.available(players)
+    out: dict[str, dict] = {}
+    for pos in ("RB", "WR", "TE", "QB", "DEF", "K"):
+        pool = sorted([p for p in avail if p.position == pos], key=lambda p: -p.vor)
+        if not pool:
+            out[pos] = {"tiers": [], "left_in_top_tier": 0, "top_vor": 0.0, "next_cliff": 0.0}
+            continue
+        tiers: list[dict] = []
+        for p in pool[:60]:
+            if tiers and tiers[-1]["tier"] == p.tier:
+                tiers[-1]["count"] += 1
+                tiers[-1]["min_vor"] = round(p.vor, 1)
+            else:
+                tiers.append({"tier": p.tier, "count": 1,
+                              "max_vor": round(p.vor, 1), "min_vor": round(p.vor, 1),
+                              "names": []})
+            if len(tiers[-1]["names"]) < 3:
+                tiers[-1]["names"].append(p.name)
+        top = tiers[0]
+        # How far value falls once this tier is exhausted.
+        cliff = (top["min_vor"] - tiers[1]["max_vor"]) if len(tiers) > 1 else 0.0
+        out[pos] = {
+            "tiers": tiers[:6],
+            "left_in_top_tier": top["count"],
+            "top_vor": top["max_vor"],
+            "next_cliff": round(cliff, 1),
+            "hazard": round(hazards.get(pos, 1.0), 2),
+        }
+    return out
+
+
+def _grid(state, cfg):
+    """Picks arranged as rounds x teams, the way a draft board actually reads.
+
+    Each cell must sit in its OWNING team's column. Laying them out by position
+    within the round looks right in round 1 and is wrong in every even round,
+    because a snake reverses -- the last pick of round 2 belongs to team 1, not
+    team 12, and putting it under the wrong header misreads the whole board.
+    """
+    by_overall = {p.overall: p for p in state.picks}
+    rows = []
+    for rnd in range(cfg.rounds):
+        row = [None] * cfg.teams
+        for i in range(cfg.teams):
+            overall = rnd * cfg.teams + i + 1
+            slot = state._order[overall - 1]
+            pick = by_overall.get(overall)
+            row[slot - 1] = {
+                "overall": overall, "slot": slot,
+                "name": pick.player_name if pick else None,
+                "pos": pick.position if pick else None,
+                "mine": slot == cfg.my_draft_slot,
+            }
+        rows.append(row)
+    return rows
+
+
 def snapshot():
     b = board()
     st, cfg = b.state, b.cfg
     keys = b.by_key()
     my_next = st.next_pick_for(cfg.my_draft_slot, after=st.current_pick)
+    # Survival everywhere is measured against the same horizon the recommender
+    # uses. At the turn your next pick is the very next one, so "will he last?"
+    # must look past it or every number on screen reads 100%.
+    horizon = _decision_horizon(st, cfg, st.current_pick)
     hazards = positional_hazards(st, b.players)
 
     avail = sorted(st.available(b.players), key=lambda p: -p.vor)[:180]
     players = [
-        _player_json(p, b, survival_prob(p, my_next, st.current_pick, hazards) if my_next else None)
+        _player_json(p, b, survival_prob(p, horizon, st.current_pick, hazards) if horizon else None)
         for p in avail
     ]
 
@@ -79,6 +147,8 @@ def snapshot():
         for g in grade_all(st, b.players, cfg)
     ]
 
+    max_vor = max([p.vor for p in avail], default=1.0) or 1.0
+
     return {
         "league": cfg.name,
         "teams": cfg.teams,
@@ -89,6 +159,7 @@ def snapshot():
         "on_clock": st.slot_on_clock(),
         "is_my_turn": st.is_my_turn(),
         "my_next_pick": my_next,
+        "horizon_pick": horizon,
         "picks_until_mine": st.picks_until_my_next(),
         "complete": st.is_complete,
         "hazards": {k: round(v, 2) for k, v in hazards.items()},
@@ -101,6 +172,10 @@ def snapshot():
             for p in st.picks[-12:]
         ],
         "resolution": board().report.summary(),
+        "scarcity": _scarcity(st, b.players, cfg, hazards, horizon),
+        "grid": _grid(st, cfg),
+        "max_vor": round(max_vor, 1),
+        "round": (st.current_pick - 1) // cfg.teams + 1,
     }
 
 

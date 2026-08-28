@@ -7,61 +7,85 @@
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-  <div class="top">
-    <div class="brand">Fantasy Command Center<small id="league"></small></div>
-    <div class="stat"><b id="pickno">—</b><span>Pick</span></div>
+  <header class="top">
+    <div class="brand">Fantasy Command Center<em id="league"></em></div>
+    <div class="stat"><b id="pickno" class="tnum">—</b><span>Pick</span></div>
+    <div class="stat"><b id="rnd" class="tnum">—</b><span>Round</span></div>
     <div class="stat"><b id="clock">—</b><span>On the clock</span></div>
-    <div class="stat"><b id="mynext">—</b><span>My next pick</span></div>
-    <div class="stat"><b id="until">—</b><span>Picks until mine</span></div>
-    <div class="turn them" id="turn">—</div>
-  </div>
+    <div class="stat hi"><b id="mynext" class="tnum">—</b><span>My next pick</span></div>
+    <div class="stat"><b id="until" class="tnum">—</b><span>Picks away</span></div>
+    <div class="clockchip" id="turn"><span class="dot"></span><span id="turntext">Loading</span></div>
+  </header>
 
-  <div class="searchbar">
-    <input id="q" placeholder="Enter the pick that was just made — type a name, then Enter"
-           autocomplete="off" spellcheck="false">
-    <span class="hintkey">↑↓ select · Enter draft · Esc clear</span>
+  <div class="cmd">
+    <input id="q" placeholder="Record a pick — type any player's name, then Enter"
+           autocomplete="off" spellcheck="false" aria-label="Record a draft pick">
+    <span class="hint"><kbd>/</kbd> search <kbd>↑↓</kbd> move <kbd>⏎</kbd> draft</span>
     <button class="btn" id="undo">Undo</button>
+    <button class="btn" id="gridbtn" aria-pressed="false">Draft grid</button>
     <button class="btn" id="reset">Reset</button>
-    <div id="drop" hidden></div>
+    <div id="drop" hidden role="listbox" aria-label="Player matches"></div>
   </div>
 
-  <div class="wrap">
+  <main class="wrap" id="mainview">
     <div class="col">
-      <h2>Recommended for you</h2>
-      <div id="recs"></div>
-      <h2>Positional pace</h2>
-      <div id="hazards"></div>
-      <h2>Recent picks</h2>
-      <div class="recent" id="recent"></div>
+      <section>
+        <h2>Your move</h2>
+        <div id="hero"></div>
+        <div id="recs"></div>
+      </section>
     </div>
 
     <div class="col">
-      <h2>Best available</h2>
-      <div class="filters" id="filters"></div>
-      <table>
-        <thead><tr>
-          <th>Player</th><th>Pos</th><th>Tm</th>
-          <th class="num">Tier</th><th class="num">VOR</th><th class="num">Proj</th>
-          <th class="num">ADP</th><th class="num">Bye</th><th class="num">Lasts?</th>
-        </tr></thead>
-        <tbody id="board"></tbody>
-      </table>
+      <section>
+        <h2>Positional scarcity <span class="tag">how many are left before the value falls off</span></h2>
+        <div class="ladder" id="ladder"></div>
+      </section>
+      <section>
+        <h2>Best available</h2>
+        <div class="filters" id="filters"></div>
+        <div class="tablewrap">
+          <table>
+            <thead><tr>
+              <th scope="col">Player</th><th scope="col">Pos</th><th scope="col">Team</th>
+              <th scope="col" class="num">Tier</th><th scope="col">Value over replacement</th>
+              <th scope="col" class="num">Proj</th><th scope="col" class="num">ADP</th>
+              <th scope="col" class="num">Bye</th><th scope="col" class="num">Lasts to my pick</th>
+            </tr></thead>
+            <tbody id="board"></tbody>
+          </table>
+        </div>
+      </section>
     </div>
 
     <div class="col">
-      <h2>My roster</h2>
-      <div id="roster"></div>
-      <h2>Still needed</h2>
-      <div id="needs"></div>
-      <h2>Draft grades — all teams</h2>
-      <div class="conf" id="conf"></div>
-      <div id="grades"></div>
+      <section>
+        <h2>My roster</h2>
+        <div id="roster"></div>
+      </section>
+      <section>
+        <h2>Still needed</h2>
+        <div class="chips" id="needs"></div>
+      </section>
+      <section>
+        <h2>Draft pace <span class="tag">vs market</span></h2>
+        <div class="pace" id="pace"></div>
+      </section>
+      <section>
+        <h2>Draft grades <span class="tag" id="myrank"></span></h2>
+        <p class="note" id="conf"></p>
+        <div id="grades"></div>
+      </section>
     </div>
+  </main>
+
+  <div class="gridview col" id="gridview" hidden>
+    <table class="dg" id="dg"></table>
   </div>
 
-  <div class="foot">
-    <span id="resolution"></span><span id="status"></span>
-  </div>
+  <footer class="foot">
+    <span id="resolution"></span><span id="status" role="status"></span>
+  </footer>
 <script src="/static/app.js"></script>
 </body>
 </html>

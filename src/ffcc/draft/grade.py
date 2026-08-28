@@ -25,6 +25,7 @@ import numpy as np
 from ..config import LeagueConfig
 from .lineup import bye_conflicts, optimal_lineup
 from .needs import starter_gaps
+from ..projections.vor import replacement_levels
 
 
 @dataclass
@@ -57,30 +58,56 @@ def _expected_vor_at(curve: np.ndarray, pick: int) -> float:
     return float(curve[min(max(pick, 1), curve.size) - 1])
 
 
+# How much of a future pick's expected edge to count. A pick you have not made
+# is not a player you have; discounting it keeps early grades honest.
+FUTURE_PICK_DISCOUNT = 0.5
+
+
 def grade_all(state, players, cfg: LeagueConfig) -> list[TeamGrade]:
     by_key = {p.key: p for p in players}
     curve = _vor_curve(players)
+    levels = replacement_levels(players, cfg)
+    starter_positions = [p for p in cfg.starters_per_team if p != "FLEX"]
+    base_replacement = (
+        sum(levels.get(p, 0.0) for p in starter_positions) / max(len(starter_positions), 1)
+    )
 
     # Value a team can still expect from its remaining picks.
-    remaining_pool = sorted(state.available(players), key=lambda p: -p.vor)
+    remaining_pool = sorted(state.available(players), key=lambda p: -p.proj_points)
 
     raw: list[TeamGrade] = []
     for slot in range(1, cfg.teams + 1):
         roster = [by_key[p.player_key] for p in state.roster(slot) if p.player_key in by_key]
 
-        # SLP: current lineup, plus forward credit for unfilled starter slots.
+        # SLP: current lineup, plus forward credit for the starter slots this
+        # team has not filled yet.
+        #
+        # The credit is essential and must be in the SAME UNITS as the lineup.
+        # Without it the team currently on the clock always grades last -- it has
+        # simply made fewer picks than everyone else, which is not a judgment
+        # about how it is drafting. We estimate each future pick as the player
+        # this team could realistically still get: walk down the remaining pool
+        # by how many picks elapse before that selection.
         slp, _ = optimal_lineup(roster, cfg)
-        gaps = starter_gaps(cfg, {p.position: sum(1 for q in roster if q.position == p.position)
-                                  for p in roster})
-        unfilled = sum(gaps.values())
+        counts: dict[str, int] = {}
+        for q in roster:
+            counts[q.position] = counts.get(q.position, 0) + 1
+        unfilled = sum(starter_gaps(cfg, counts).values())
+
         future_picks = [
-            i + 1 for i, s in enumerate(state._order[state.current_pick - 1:], start=state.current_pick - 1)
+            i + 1
+            for i, s in enumerate(state._order[state.current_pick - 1:], start=state.current_pick - 1)
             if s == slot
         ]
+        # Each unfilled slot is credited at roughly replacement level plus a
+        # small edge for picking earlier. Keeping the credit nearly flat is the
+        # point: an empty slot should not differentiate teams, because nobody
+        # knows who will fill it. Real picks do the differentiating; otherwise
+        # the grade just measures how many picks you happen to have made.
         credit = 0.0
-        for n, pick in enumerate(future_picks[: max(unfilled, 0)]):
-            if n < len(remaining_pool):
-                credit += max(_expected_vor_at(curve, pick), 0.0)
+        for pick in future_picks[: max(unfilled, 0)]:
+            edge = max(_expected_vor_at(curve, pick), 0.0) * FUTURE_PICK_DISCOUNT
+            credit += base_replacement + edge
         slp_total = slp + credit
 
         # VAS: points captured above what that draft slot normally returns.

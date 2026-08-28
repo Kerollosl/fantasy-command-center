@@ -12,11 +12,17 @@ from ..draft.grade import grade_all
 from ..draft.needs import starter_gaps
 from ..draft.recommend import _decision_horizon, recommend
 from ..draft.survival import positional_hazards, survival_prob
+from ..config import DATA_DIR
+from ..draft.montecarlo import simulate, value_share
 from ..engine import build_board, set_draft_slot
+from ..history.rounds import insight as round_insight
 
 HERE = Path(__file__).parent
 app = FastAPI(title="Fantasy Command Center")
 app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
+_shots = DATA_DIR / "headshots"
+_shots.mkdir(parents=True, exist_ok=True)
+app.mount("/headshots", StaticFiles(directory=_shots), name="headshots")
 
 BOARD = None
 
@@ -34,6 +40,7 @@ def _player_json(p, b, surv=None):
         "adp": p.adp, "bye": p.bye, "proj": p.proj_points, "vor": p.vor,
         "tier": p.tier, "injury": p.injury_status,
         "depth": p.depth_chart_order, "survival": surv,
+        "age": p.age, "headshot": p.headshot,
     }
 
 
@@ -132,15 +139,66 @@ def snapshot():
         for p in avail
     ]
 
-    recs = [
-        {
+    rec_objs = recommend(st, b.players, cfg, limit=8)
+    shares = value_share(rec_objs)
+    try:
+        odds = {o.key: o for o in simulate(st, b.players, cfg, [r.player for r in rec_objs])}
+    except Exception:  # noqa: BLE001 - the analytic score always stands on its own
+        odds = {}
+
+    # Order by the number actually shown. The analytic score and the simulated
+    # probability do not always agree, and when they disagree the simulation is
+    # the better answer -- it accounts for what comes back to you. Ranking by one
+    # while displaying the other put a 46% candidate below a 26% one.
+    if odds:
+        rec_objs.sort(key=lambda r: -(odds[r.player.key].probability
+                                      if r.player.key in odds else 0.0))
+
+    # When the simulation and the value model disagree, say why. The reason is
+    # already on screen -- a tier cliff, a run, a player about to disappear --
+    # but leaving the reader to connect it is exactly the ambiguity that makes a
+    # recommendation feel arbitrary.
+    def _disagreement(top_rec) -> str | None:
+        if not odds or len(rec_objs) < 2:
+            return None
+        value_leader = max(rec_objs, key=lambda r: shares.get(r.player.key, 0.0))
+        if value_leader.player.key == top_rec.player.key:
+            return None
+        sc = scarcity.get(top_rec.player.position) or {}
+        left, cliff = sc.get("left_in_top_tier"), sc.get("next_cliff") or 0
+        vl_sc = scarcity.get(value_leader.player.position) or {}
+        vl_left = vl_sc.get("left_in_top_tier")
+        bits = []
+        if left is not None and cliff >= 8:
+            bits.append(
+                f"only {left} {top_rec.player.position}"
+                f"{'' if left == 1 else 's'} left at this value, then a {cliff:.0f}-point drop"
+            )
+        if vl_left is not None and vl_left >= 5:
+            bits.append(
+                f"{value_leader.player.position} is {vl_left} deep, so waiting there costs less"
+            )
+        if not bits:
+            return None
+        return (f"Value alone prefers {value_leader.player.name}, but the simulation "
+                f"favours {top_rec.player.name}: " + "; ".join(bits) + ".")
+
+    recs = []
+    for r in rec_objs:
+        o = odds.get(r.player.key)
+        recs.append({
             "name": r.player.name, "pos": r.player.position, "team": r.player.team,
             "key": r.player.key, "score": r.score, "vona": r.vona,
             "survival": r.survival_next, "adp": r.player.adp, "tier": r.player.tier,
             "reasons": r.reasons, "warnings": r.warnings,
-        }
-        for r in recommend(st, b.players, cfg, limit=8)
-    ]
+            "headshot": r.player.headshot, "age": r.player.age,
+            "value_share": shares.get(r.player.key),
+            "pick_prob": round(o.probability, 4) if o else None,
+            "prob_low": round(o.low, 4) if o else None,
+            "prob_high": round(o.high, 4) if o else None,
+            "sims": o.sims if o else 0,
+            "tied_with": o.tied_with if o else [],
+        })
 
     my_roster = [keys[p.player_key] for p in st.roster(cfg.my_draft_slot) if p.player_key in keys]
     counts: dict[str, int] = {}
@@ -163,6 +221,7 @@ def snapshot():
     ]
 
     max_vor = max([p.vor for p in avail], default=1.0) or 1.0
+    scarcity = _scarcity(st, b.players, cfg, hazards, horizon)
 
     return {
         "league": cfg.name,
@@ -188,10 +247,13 @@ def snapshot():
             for p in st.picks[-12:]
         ],
         "resolution": board().report.summary(),
-        "scarcity": _scarcity(st, b.players, cfg, hazards, horizon),
+        "scarcity": scarcity,
+        "disagreement": _disagreement(rec_objs[0]) if rec_objs else None,
         "grid": _grid(st, cfg),
         "max_vor": round(max_vor, 1),
         "round": (st.current_pick - 1) // cfg.teams + 1,
+        "round_insight": round_insight(b.round_value, (st.current_pick - 1) // cfg.teams + 1),
+        "replacement": {k: round(v, 1) for k, v in b.replacement.items()},
     }
 
 
@@ -203,6 +265,42 @@ def index():
 @app.get("/api/state")
 def get_state():
     return snapshot()
+
+
+@app.get("/api/player/{key:path}")
+def player_profile(key: str):
+    """Everything known about one player, for the profile panel."""
+    b = board()
+    p = b.by_key().get(key)
+    if not p:
+        return {"ok": False, "error": "unknown player"}
+
+    st, cfg = b.state, b.cfg
+    horizon = _decision_horizon(st, cfg, st.current_pick)
+    hazards = positional_hazards(st, b.players)
+    same_pos = [q for q in st.available(b.players)
+                if q.position == p.position and q.key != p.key]
+    next_up = max(same_pos, key=lambda q: q.vor) if same_pos else None
+
+    return {
+        "ok": True,
+        "key": p.key, "name": p.name, "pos": p.position, "team": p.team,
+        "age": p.age, "bye": p.bye, "adp": p.adp, "tier": p.tier,
+        "headshot": p.headshot, "injury": p.injury_status,
+        "depth": p.depth_chart_order, "years_exp": p.years_exp,
+        "proj": p.proj_points, "vor": p.vor,
+        "proj_market": p.proj_market, "proj_baseline": p.proj_baseline,
+        "history_weight": p.history_weight,
+        "trajectory": p.trajectory, "adjustments": p.adjustments,
+        "seasons": p.seasons,
+        "drafted": p.key in st.drafted_keys(),
+        "survival": (survival_prob(p, horizon, st.current_pick, hazards)
+                     if horizon and p.key not in st.drafted_keys() else None),
+        "horizon": horizon,
+        "replacement": round(b.replacement.get(p.position, 0.0), 1),
+        "next_best": ({"name": next_up.name, "vor": next_up.vor, "proj": next_up.proj_points}
+                      if next_up else None),
+    }
 
 
 @app.get("/api/search")

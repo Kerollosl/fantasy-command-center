@@ -9,6 +9,10 @@ field outright.
 from __future__ import annotations
 
 from ..identity.normalize import norm_name
+from ..history.production import load_or_build as load_production
+from ..history.production import trajectory as rank_trajectory
+from .aging import load_or_fit as load_aging
+from .aging import multiplier as age_multiplier
 from .baseline import baseline_projection, player_history
 from .market import build_rank_curves, market_points
 
@@ -16,11 +20,30 @@ from .market import build_rank_curves, market_points
 # knows things our stat history does not (scheme changes, camp reports, trades).
 MAX_HISTORY_WEIGHT = 0.55
 
+# How much a player's rank trajectory may move the projection. Kept small on
+# purpose: direction of travel is a real signal but a noisy one, and it should
+# tilt a close call rather than override production and market together.
+TRAJECTORY_WEIGHT = 0.06
 
-def attach_projections(players, scoring, current_season=2026, fmt="ppr", teams=12):
-    """Fill proj_points on each Player, blending history and market."""
+
+def attach_projections(players, scoring, current_season=2026, fmt="ppr", teams=12,
+                       cfg=None, use_signals=True):
+    """Fill proj_points on each Player, blending history and market.
+
+    With `use_signals`, three further adjustments apply -- age, durability and
+    rank trajectory. Each is recorded on the player so the profile can show why
+    a projection moved rather than shifting the number invisibly.
+    """
     curves = build_rank_curves(scoring, fmt=fmt, teams=teams)
     hist = player_history(scoring, current_season)
+
+    aging, production = {}, {}
+    if use_signals and cfg is not None:
+        try:
+            aging = load_aging(cfg)
+            production = load_production(cfg)
+        except Exception:  # noqa: BLE001 - signals are an enhancement, not a dependency
+            aging, production = {}, {}
 
     # Positional ADP rank drives the market term.
     by_pos: dict[str, list] = {}
@@ -39,10 +62,44 @@ def attach_projections(players, scoring, current_season=2026, fmt="ppr", teams=1
             w = MAX_HISTORY_WEIGHT * conf
             proj = w * base + (1 - w) * mkt
 
-        p.proj_points = round(proj, 1)
         p.proj_market = round(mkt, 1)
         p.proj_baseline = round(base, 1)
         p.history_weight = round(w, 2)
         p.evidence_games = games
+
+        adjustments = []
+        if use_signals:
+            # Apply the age effect only in proportion to how much this projection
+            # leans on our own history. The market half already prices age -- the
+            # field knows how old these players are -- so applying the full step
+            # on top of ADP would double-count it.
+            raw_am = age_multiplier(aging, p.position, p.age)
+            damp = max(w, 0.25) if recs else 0.25
+            am = 1.0 + (raw_am - 1.0) * damp
+            if abs(am - 1.0) > 0.005:
+                proj *= am
+                adjustments.append({
+                    "kind": "age", "factor": round(am, 3),
+                    "note": f"age {p.age}: {(am - 1) * 100:+.0f}% "
+                            f"({(raw_am - 1) * 100:+.0f}% on the {p.position} curve, "
+                            f"damped because the market already prices age)",
+                })
+
+            lines = production.get(f"{norm_name(p.name)}|{p.position}", [])
+            p.seasons = lines
+            if lines:
+                tr = rank_trajectory(lines)
+                p.trajectory = tr
+                if abs(tr) > 0.05 and abs(TRAJECTORY_WEIGHT * tr) >= 0.005:
+                    tf = 1.0 + TRAJECTORY_WEIGHT * tr
+                    proj *= tf
+                    direction = "rising" if tr > 0 else "falling"
+                    adjustments.append({
+                        "kind": "trajectory", "factor": round(tf, 3),
+                        "note": f"positional rank {direction}: {(tf - 1) * 100:+.0f}%",
+                    })
+
+        p.adjustments = adjustments
+        p.proj_points = round(proj, 1)
 
     return players

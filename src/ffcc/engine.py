@@ -2,14 +2,18 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import dataclasses
+import datetime as _dt
 import re
 
 from .config import CONFIG_DIR, LeagueConfig, load_league
 from .draft.state import DraftState
+from .history.production import load_or_build as load_production
+from .history.rounds import load_or_build as load_round_value
 from .identity.resolver import ResolutionReport, build_players
+from .sources import crosswalk, headshots
 from .projections.blend import attach_projections
 from .projections.vor import attach_tiers, attach_vor
 
@@ -23,6 +27,7 @@ class Board:
     report: ResolutionReport
     replacement: dict[str, float]
     state: DraftState
+    round_value: dict = field(default_factory=dict)
 
     def by_key(self) -> dict[str, object]:
         return {p.key: p for p in self.players}
@@ -102,7 +107,7 @@ def build_board(cfg: LeagueConfig | None = None, season: int = 2026) -> Board:
         league_adp_format=cfg.adp_format, teams=cfg.teams, year=season, current_season=season
     )
     attach_projections(players, cfg.scoring, current_season=season, fmt=cfg.adp_format,
-                       teams=cfg.teams)
+                       teams=cfg.teams, cfg=cfg)
     replacement = attach_vor(players, cfg)
     attach_tiers(players)
 
@@ -112,5 +117,68 @@ def build_board(cfg: LeagueConfig | None = None, season: int = 2026) -> Board:
             len(report.unmatched_gsis), ", ".join(report.unmatched_gsis[:10]),
         )
 
+    _attach_bio(players, season)
+
+    try:
+        round_value = load_round_value(cfg)
+    except Exception:  # noqa: BLE001 - an insight is never worth failing a draft over
+        round_value = {}
+
     return Board(cfg=cfg, players=players, report=report, replacement=replacement,
-                 state=DraftState(cfg))
+                 state=DraftState(cfg), round_value=round_value)
+
+
+def _attach_bio(players, season: int) -> None:
+    """Age and headshot, from the one roster file that carries both."""
+    try:
+        df = crosswalk.season_roster(season)
+    except Exception:  # noqa: BLE001
+        return
+
+    from .identity.normalize import norm_name, norm_position
+
+    bio: dict[tuple[str, str], dict] = {}
+    for row in df.to_dict("records"):
+        name = row.get("full_name")
+        if not name:
+            continue
+        key = (norm_name(name), norm_position(row.get("position")))
+        bd = row.get("birth_date")
+        bio.setdefault(key, {
+            "birth_date": bd if isinstance(bd, str) else None,
+            "headshot": row.get("headshot_url") if isinstance(row.get("headshot_url"), str) else None,
+        })
+
+    today = _dt.date.today()
+    for p in players:
+        rec = bio.get((norm_name(p.name), p.position))
+        if not rec:
+            continue
+        p.headshot = headshots.local_name(rec["headshot"]) or None
+        p.birth_date = rec["birth_date"]
+        if rec["birth_date"] and not p.age:
+            try:
+                b = _dt.date.fromisoformat(rec["birth_date"])
+                p.age = today.year - b.year - ((today.month, today.day) < (b.month, b.day))
+            except ValueError:
+                pass
+
+
+def cache_media(board: "Board", season: int = 2026) -> int:
+    """Download headshots for the draftable board. Called by `ffcc snapshot`."""
+    try:
+        df = crosswalk.season_roster(season)
+    except Exception:  # noqa: BLE001
+        return 0
+
+    from .identity.normalize import norm_name, norm_position
+
+    want = {(norm_name(p.name), p.position) for p in board.players}
+    urls = [
+        r.get("headshot_url") for r in df.to_dict("records")
+        if isinstance(r.get("headshot_url"), str)
+        and (norm_name(r.get("full_name") or ""), norm_position(r.get("position"))) in want
+    ]
+    got = headshots.cache_all(urls)
+    _attach_bio(board.players, season)
+    return len(got)

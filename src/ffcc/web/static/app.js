@@ -45,6 +45,110 @@ function donut(segments, size = 26, thickness = 5) {
      ${arcs}</svg>`;
 }
 
+// Rank sparkline: positional finish across seasons, inverted so up means better.
+// Rank is drawn on a log scale because RB1 to RB3 is a small move at the elite
+// end while RB30 to RB10 is a large one; a linear axis would flatten the second.
+function rankSpark(seasons, pos, w = 232, h = 54) {
+  const pts = seasons.filter((s) => s.rank);
+  if (pts.length < 2) return `<div class="nodata">Not enough seasons to chart.</div>`;
+  const L = (r) => Math.log(Math.max(r, 1));
+  const maxL = Math.max(L(48), ...pts.map((s) => L(s.rank)));
+  const x = (i) => 4 + (i * (w - 8)) / (pts.length - 1);
+  const y = (r) => 6 + (L(r) / maxL) * (h - 24);
+  const line = pts.map((s, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(s.rank).toFixed(1)}`).join("");
+  const dots = pts.map((s, i) => `
+    <circle cx="${x(i).toFixed(1)}" cy="${y(s.rank).toFixed(1)}" r="3.5"
+      fill="var(--${pos.toLowerCase()})" stroke="var(--s1)" stroke-width="1.5"><title>${
+      s.season}: ${pos}${s.rank}, ${s.points} pts in ${s.games} games</title></circle>`).join("");
+  const labels = pts.map((s, i) =>
+    `<text x="${x(i).toFixed(1)}" y="${h - 3}" text-anchor="middle" class="sl">${
+      String(s.season).slice(2)}</text>`).join("");
+  const best = pts.map((s, i) => (i === 0 || i === pts.length - 1)
+    ? `<text x="${x(i).toFixed(1)}" y="${(y(s.rank) - 8).toFixed(1)}" text-anchor="middle" class="sr">${pos}${s.rank}</text>` : "").join("");
+  return `<svg class="spark" viewBox="0 0 ${w} ${h}" width="100%" height="${h}" role="img"
+    aria-label="Positional finish by season">
+    <path d="${line}" fill="none" stroke="var(--${pos.toLowerCase()})" stroke-width="2"
+      stroke-linejoin="round" stroke-linecap="round" opacity=".85"/>
+    ${dots}${labels}${best}</svg>`;
+}
+
+function face(shot, name, size = 38) {
+  const initials = String(name || "").split(/\s+/).slice(0, 2).map((w) => w[0] || "").join("");
+  return shot
+    ? `<img class="face" src="/headshots/${esc(shot)}" width="${size}" height="${size}" alt="" loading="lazy">`
+    : `<span class="face blank" style="width:${size}px;height:${size}px">${esc(initials)}</span>`;
+}
+
+async function openProfile(key) {
+  const d = await api("/api/player/" + encodeURIComponent(key));
+  if (!d.ok) return;
+  const panel = $("profile");
+  const adj = d.adjustments.length
+    ? d.adjustments.map((a) => `<li>${esc(a.note)}</li>`).join("")
+    : `<li class="muted">No age or trajectory adjustment applied.</li>`;
+  const rows = [...d.seasons].reverse().map((s) => `
+    <tr><td>${s.season}</td><td><b>${d.pos}${s.rank}</b></td>
+      <td class="num">${s.points}</td><td class="num">${s.games}</td>
+      <td class="num">${s.ppg}</td></tr>`).join("");
+
+  panel.innerHTML = `
+    <div class="pf">
+      <button class="pfclose" id="pfclose" aria-label="Close profile">×</button>
+      <div class="pfhead">
+        ${face(d.headshot, d.name, 64)}
+        <div>
+          <div class="pfname">${esc(d.name)}</div>
+          <div class="pfmeta"><span class="pos ${d.pos}">${d.pos}</span>
+            <span>${esc(d.team)}</span>
+            ${d.age ? `<span>· Age ${d.age}</span>` : ""}
+            ${d.bye ? `<span>· Bye ${d.bye}</span>` : ""}
+            ${d.adp ? `<span>· ADP ${d.adp}</span>` : ""}</div>
+        </div>
+      </div>
+
+      <h3>Positional finish by season</h3>
+      ${rankSpark(d.seasons, d.pos)}
+      ${d.seasons.length ? `<table class="pfseasons">
+        <thead><tr><th>Season</th><th>Finish</th><th class="num">Points</th>
+          <th class="num">Games</th><th class="num">Per&nbsp;game</th></tr></thead>
+        <tbody>${rows}</tbody></table>` : ""}
+
+      <h3>What this projection is built from</h3>
+      <div class="pfrow"><span>Projected points</span><b>${d.proj}</b></div>
+      <div class="pfrow"><span>From his own production</span><b>${d.proj_baseline}</b></div>
+      <div class="pfrow"><span>From the market (ADP)</span><b>${d.proj_market}</b></div>
+      <div class="pfrow"><span>Weight on his own record</span><b>${Math.round(d.history_weight * 100)}%</b></div>
+      <ul class="pfadj">${adj}</ul>
+
+      <h3>What the board numbers mean for him</h3>
+      <div class="pfrow"><span>Points above a freely available ${d.pos}</span><b>${d.vor}</b></div>
+      <div class="pfrow"><span>That replacement ${d.pos} projects for</span><b>${d.replacement}</b></div>
+      ${d.next_best ? `<div class="pfrow"><span>Next ${d.pos} on the board</span>
+        <b>${esc(d.next_best.name)} (${d.next_best.proj})</b></div>` : ""}
+      ${d.survival != null ? `<div class="pfrow"><span>Still there at pick ${d.horizon}</span>
+        <b>${pct(d.survival)}%</b></div>` : ""}
+    </div>`;
+  panel.hidden = false;
+  $("pfclose").onclick = closeProfile;
+  panel.querySelector(".pf").focus?.();
+}
+
+function closeProfile() { $("profile").hidden = true; }
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !$("profile").hidden) closeProfile();
+});
+
+function probRing(p, size = 56) {
+  const R = 15.5, C = 2 * Math.PI * R, len = Math.max(p, 0) * C;
+  return `<svg width="${size}" height="${size}" viewBox="0 0 40 40" role="img"
+    aria-label="${Math.round(p * 100)} percent"><circle cx="20" cy="20" r="${R}" fill="none"
+      stroke="var(--s3)" stroke-width="5"/>
+    <circle cx="20" cy="20" r="${R}" fill="none" stroke="var(--good)" stroke-width="5"
+      stroke-linecap="round" stroke-dasharray="${len} ${C - len}"
+      transform="rotate(-90 20 20)"/>
+    <text x="20" y="23.5" text-anchor="middle" class="ringtext">${Math.round(p * 100)}%</text></svg>`;
+}
+
 async function api(path, opts) {
   const r = await fetch(path, opts);
   if (!r.ok) throw new Error(r.statusText);
@@ -155,6 +259,12 @@ function render() {
     : S.is_my_turn ? "You are on the clock" : `Team ${S.on_clock} is picking`;
 
   if (showGrid) { renderGrid(); return; }
+  const ri = S.round_insight;
+  $("roundtip").innerHTML = ri
+    ? `<span class="ritext">${esc(ri.text)}</span>
+       <span class="rin">${ri.seasons} seasons · n=${ri.n}</span>`
+    : `<span class="ritext dim">Not enough historical evidence for this round.</span>`;
+
   renderHero(); renderLadder(); renderBoard();
   renderRoster(); renderPace(); renderGrades();
   $("resolution").textContent = S.resolution;
@@ -168,38 +278,63 @@ function renderHero() {
   }
   const hz = S.horizon_pick;
   const lead = S.is_my_turn ? "Take now" : "Top of your board";
-  const headline = top.reasons[1] || top.reasons[0] || "";
+  const prob = top.pick_prob;
+  const tie = (top.tied_with || []).length
+    ? `<div class="tie">Too close to call against ${esc(top.tied_with[0])}</div>` : "";
   $("hero").innerHTML = `
-    <div class="hero" data-key="${esc(top.key)}" role="button" tabindex="0">
+    <div class="hero" data-key="${esc(top.key)}">
       <div class="lead">${esc(lead)}</div>
-      <div class="nm">${esc(top.name)}</div>
-      <div class="sub"><span class="pos ${top.pos}">${top.pos}</span>
-        <span>${esc(top.team)}</span><span>·</span><span>ADP ${top.adp ?? "—"}</span>
-        <span>·</span><span>Tier ${top.tier}</span></div>
+      <div class="herotop">
+        ${face(top.headshot, top.name, 52)}
+        <div class="heroid">
+          <div class="nm">${esc(top.name)}</div>
+          <div class="sub"><span class="pos ${top.pos}">${top.pos}</span>
+            <span>${esc(top.team)}</span>${top.age ? `<span>· ${top.age}y</span>` : ""}
+            <span>· ADP ${top.adp ?? "—"}</span></div>
+        </div>
+        ${prob != null ? `<div class="probring">${probRing(prob)}
+          <span class="problabel">chance this<br>is the pick</span></div>` : ""}
+      </div>
+      ${tie}
+      ${S.disagreement ? `<div class="disagree">${esc(S.disagreement)}</div>` : ""}
       <div class="why">
         <div class="metric"><b class="tnum">${signed(top.vona)}</b>
-          <span>points over the next ${top.pos} you'd realistically get</span></div>
+          <span>points you'd lose by waiting — the next ${top.pos} you'd realistically
+          get projects that much lower</span></div>
         <div class="metric"><b class="tnum">${pct(top.survival)}%</b>
           <span>chance he is still there at pick ${hz ?? "—"}${
             hz && S.my_next_pick && hz !== S.my_next_pick
-              ? ` <span style="color:var(--fg-4)">(you also pick at ${S.my_next_pick})</span>` : ""}</span></div>
-        ${top.warnings.length ? `<ul class="reasons" style="margin-left:0">
+              ? ` <span class="dim">(you also pick at ${S.my_next_pick})</span>` : ""}</span></div>
+        ${top.value_share != null ? `<div class="drivers">
+          <div class="drow"><span>Model preference</span>
+            <i><b style="width:${pct(top.value_share)}%"></b></i>
+            <em>${pct(top.value_share)}%</em></div>
+          ${prob != null ? `<div class="drow"><span>Simulated best pick</span>
+            <i><b style="width:${pct(prob)}%;background:var(--good)"></b></i>
+            <em>${pct(prob)}%</em></div>` : ""}
+        </div>` : ""}
+        ${top.warnings.length ? `<ul class="reasons">
           ${top.warnings.map((w) => `<li class="w">${esc(w)}</li>`).join("")}</ul>` : ""}
       </div>
+      <button class="pfbtn" data-profile="${esc(top.key)}">View full profile</button>
     </div>`;
   const h = $("hero").firstElementChild;
+  h.querySelector(".pfbtn").onclick = (e) => { e.stopPropagation(); openProfile(top.key); };
   h.onclick = () => draft(top.key);
-  h.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); draft(top.key); } };
 
-  const alts = [...rest].sort((a, b) => b.vona - a.vona);
+  const alts = rest;   // already ordered by the number each row displays
   $("recs").innerHTML = alts.map((r, i) => `
     <button class="rec" data-key="${esc(r.key)}">
       <span class="rk">${i + 2}</span>
+      ${face(r.headshot, r.name, 26)}
       <span class="pos ${r.pos}">${r.pos}</span>
       <span class="nm">${esc(r.name)}</span>
-      <span class="rt"><b class="tnum" style="${r.vona < 0 ? "color:var(--fg-3)" : ""}">${signed(r.vona)}</b><span>vs next ${r.pos}</span></span>
+      <span class="rt">${r.pick_prob != null
+        ? `<b class="tnum prob">${pct(r.pick_prob)}%</b><span>best pick</span>`
+        : `<b class="tnum">${signed(r.vona)}</b><span>vs next ${r.pos}</span>`}</span>
     </button>`).join("");
-  [...$("recs").children].forEach((el) => (el.onclick = () => draft(el.dataset.key)));
+  [...$("recs").children].forEach((el) =>
+    (el.onclick = (e) => (e.shiftKey ? draft(el.dataset.key) : openProfile(el.dataset.key))));
 }
 
 // Tier ladder — the scarcity read. Each block group is a tier of remaining
@@ -254,9 +389,10 @@ function renderBoard() {
     const flag = p.injury
       ? `<span class="flag ${p.injury === "Questionable" ? "q" : ""}">${esc(p.injury.slice(0, 4))}</span>` : "";
     return `<tr class="${cliff ? "cliff" : ""}" data-key="${esc(p.key)}">
-      <td><span class="pname">${esc(p.name)}${flag}</span></td>
+      <td><span class="pname">${face(p.headshot, p.name, 22)}${esc(p.name)}${flag}</span></td>
       <td><span class="posdot ${p.pos}">${p.pos}</span></td>
       <td class="mut">${esc(p.team)}</td>
+      <td class="num mut">${p.age ?? "—"}</td>
       <td class="num mut">${p.tier}</td>
       <td class="vbar"><i style="width:${w}%;background:var(--${p.pos.toLowerCase()})"></i><b>${p.vor}</b></td>
       <td class="num mut">${p.proj}</td>
@@ -267,7 +403,10 @@ function renderBoard() {
         <span class="mut">${pct(s)}%</span></span>`}</td>
     </tr>`;
   }).join("");
-  [...$("board").children].forEach((tr) => tr.dataset.key && (tr.onclick = () => draft(tr.dataset.key)));
+  [...$("board").children].forEach((tr) => {
+    if (!tr.dataset.key) return;
+    tr.onclick = (e) => (e.shiftKey ? draft(tr.dataset.key) : openProfile(tr.dataset.key));
+  });
 }
 
 function renderRoster() {

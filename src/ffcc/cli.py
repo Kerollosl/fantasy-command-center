@@ -20,10 +20,27 @@ def cmd_serve(args):
 
 def cmd_snapshot(args):
     """Pull and cache everything, so draft day never touches the network."""
-    from .engine import build_board
+    from .engine import build_board, cache_media
+    from .history.production import load_or_build as load_production
+    from .projections.aging import load_or_fit as load_aging
 
     b = build_board()
     print(b.report.summary())
+
+    print("Fitting aging curves...")
+    curves = load_aging(b.cfg, refresh=args.refresh)
+    print(f"  {sum(len(v) for v in curves.values())} fitted age steps")
+
+    print("Building production history...")
+    prod = load_production(b.cfg, refresh=args.refresh)
+    print(f"  {len(prod)} player histories")
+
+    print("Caching headshots...")
+    n = cache_media(b)
+    print(f"  {n} headshots cached locally")
+
+    if b.round_value:
+        print(f"  round-value table over {len(b.round_value.get('seasons', []))} seasons")
     if b.report.unmatched_gsis:
         print(f"\nUNRESOLVED ({len(b.report.unmatched_gsis)}):")
         for n in b.report.unmatched_gsis:
@@ -60,6 +77,8 @@ def main(argv=None):
     s.set_defaults(fn=cmd_serve)
 
     s = sub.add_parser("snapshot", help="cache all data and verify resolution")
+    s.add_argument("--refresh", action="store_true",
+                   help="refit aging curves and rebuild history from source")
     s.set_defaults(fn=cmd_snapshot)
 
     s = sub.add_parser("board", help="print the draft board")

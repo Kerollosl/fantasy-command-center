@@ -6,8 +6,13 @@ venv/
 .pytest_cache/
 .DS_Store
 
-# Cached API pulls + local DB + personal league data
+# Cached API pulls, derived artifacts, and personal league data.
+# All of it is rebuilt by `ffcc snapshot` -- none belongs in the repo.
 data/cache/
+data/headshots/
+data/production.json
+data/aging.json
+data/round_value.json
 data/*.db
 data/*.sqlite
 config/secrets.yaml

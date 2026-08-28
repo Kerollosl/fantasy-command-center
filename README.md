@@ -83,6 +83,18 @@ mid-draft. Everything re-derives from it: which picks are yours, every survival
 probability, the recommendation horizon, and the grades. Your choice is written
 back to `config/league.yaml` so it survives a restart.
 
+## Player profiles
+
+Click any player for their full record. Shift-click drafts instead.
+
+![Player profile](docs/profile.png)
+
+Up to seven seasons of positional finish, drawn on a log scale because RB1 → RB3
+is a small move at the elite end while RB30 → RB10 is a large one. Below it: the
+season table, what the projection is built from, and what each board number
+means for that specific player — the replacement he is measured against, and the
+next player at his position you'd get instead.
+
 ## Reading the board
 
 **Tier ladder.** One lane per skill position. Blocks are the players still
@@ -104,6 +116,23 @@ pick in a back-to-back turn.
 **Roster shape donuts.** Positional make-up of each roster — the one question
 on this board that is genuinely part-to-whole rather than "how much". Survival
 stays a meter and value stays a bar for exactly that reason.
+
+**Pick probability.** Two numbers, because they answer different questions.
+*Simulated best pick* forces each candidate, plays the draft forward, and counts
+how often it produced your best roster. *Model preference* is the value model's
+share. When they disagree the board says why — usually a tier cliff. When two
+candidates are statistically tied it says that too, rather than inventing a
+winner. This is model output, not a poll of experts.
+
+**Age curves.** Fitted from paired within-player year-over-year deltas, not the
+average by age — that version is survivorship-biased and claims receivers peak
+at 21. The paired method recovers the real running-back cliff (−14% at 27→28,
+−26% at 28→29) and shows quarterbacks aging best.
+
+**Round insight.** Nine seasons of ADP joined to actual finishes: how often a
+pick from this round returned a startable season, by position. Not "what
+champions drafted" — championship rosters aren't available anywhere free, and
+inventing them would be worse than silence.
 
 **Draft grid.** Every pick as rounds × teams, cells filled by position with
 round.pick labels and snake-direction arrows, your column outlined. The fastest

@@ -53,6 +53,11 @@ class Player:
     proj_baseline: float = 0.0
     history_weight: float = 0.0
     evidence_games: int = 0
+    trajectory: float = 0.0
+    seasons: list = field(default_factory=list)
+    adjustments: list = field(default_factory=list)
+    headshot: str | None = None
+    birth_date: str | None = None
     vor: float = 0.0
     tier: int = 0
 

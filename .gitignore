@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.DS_Store
+
+# Cached API pulls + local DB + personal league data
+data/cache/
+data/*.db
+data/*.sqlite
+config/secrets.yaml
+.env

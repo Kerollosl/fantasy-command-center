@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Fantasy Command Center</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div class="top">
+    <div class="brand">Fantasy Command Center<small id="league"></small></div>
+    <div class="stat"><b id="pickno">—</b><span>Pick</span></div>
+    <div class="stat"><b id="clock">—</b><span>On the clock</span></div>
+    <div class="stat"><b id="mynext">—</b><span>My next pick</span></div>
+    <div class="stat"><b id="until">—</b><span>Picks until mine</span></div>
+    <div class="turn them" id="turn">—</div>
+  </div>
+
+  <div class="searchbar">
+    <input id="q" placeholder="Enter the pick that was just made — type a name, then Enter"
+           autocomplete="off" spellcheck="false">
+    <span class="hintkey">↑↓ select · Enter draft · Esc clear</span>
+    <button class="btn" id="undo">Undo</button>
+    <button class="btn" id="reset">Reset</button>
+    <div id="drop" hidden></div>
+  </div>
+
+  <div class="wrap">
+    <div class="col">
+      <h2>Recommended for you</h2>
+      <div id="recs"></div>
+      <h2>Positional pace</h2>
+      <div id="hazards"></div>
+      <h2>Recent picks</h2>
+      <div class="recent" id="recent"></div>
+    </div>
+
+    <div class="col">
+      <h2>Best available</h2>
+      <div class="filters" id="filters"></div>
+      <table>
+        <thead><tr>
+          <th>Player</th><th>Pos</th><th>Tm</th>
+          <th class="num">Tier</th><th class="num">VOR</th><th class="num">Proj</th>
+          <th class="num">ADP</th><th class="num">Bye</th><th class="num">Lasts?</th>
+        </tr></thead>
+        <tbody id="board"></tbody>
+      </table>
+    </div>
+
+    <div class="col">
+      <h2>My roster</h2>
+      <div id="roster"></div>
+      <h2>Still needed</h2>
+      <div id="needs"></div>
+      <h2>Draft grades — all teams</h2>
+      <div class="conf" id="conf"></div>
+      <div id="grades"></div>
+    </div>
+  </div>
+
+  <div class="foot">
+    <span id="resolution"></span><span id="status"></span>
+  </div>
+<script src="/static/app.js"></script>
+</body>
+</html>

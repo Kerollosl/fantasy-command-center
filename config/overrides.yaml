@@ -1,0 +1,11 @@
+# Manual player-identity fixes for names the resolver cannot join automatically.
+# The resolver reports every unmatched draftable player at startup — add them here.
+#
+# Format:
+#   - ffc_name: "Marquise Brown"
+#     nflverse_name: "Hollywood Brown"
+#     position: WR
+aliases: []
+
+# Players to always exclude (retired, duplicates, etc.)
+exclude: []

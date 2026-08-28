@@ -1,0 +1,37 @@
+# Your league. Every valuation number is derived from this file — nothing is hardcoded.
+name: "Main League"
+teams: 12
+rounds: 15
+draft_type: snake
+my_draft_slot: 1        # 1-indexed. Change to your real slot before the draft.
+
+# Starting lineup. Drives replacement level for VOR.
+roster:
+  QB: 1
+  RB: 2
+  WR: 2
+  TE: 1
+  FLEX: 1               # RB/WR/TE
+  DEF: 1
+  K: 1
+  BENCH: 6
+
+flex_eligible: [RB, WR, TE]
+
+# Scoring applied to raw stat lines from nflverse, not to canned point totals.
+scoring:
+  passing_yards: 0.04         # 1 pt / 25 yds
+  passing_tds: 4
+  interceptions: -2
+  passing_2pt_conversions: 2
+  rushing_yards: 0.1
+  rushing_tds: 6
+  rushing_2pt_conversions: 2
+  receptions: 1.0             # PPR
+  receiving_yards: 0.1
+  receiving_tds: 6
+  receiving_2pt_conversions: 2
+  fumbles_lost: -2
+
+# FFC ADP endpoint format. one of: ppr | half-ppr | standard | 2qb | dynasty
+adp_format: ppr

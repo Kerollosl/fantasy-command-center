@@ -2,6 +2,14 @@
 // the only requirement that matters is that this never fails to render.
 
 let S = null, posFilter = "ALL", results = [], sel = 0, showGrid = false;
+let sortState = { key: "vor", dir: -1 };
+let lastHeroKey = null, lastProb = null;
+const flashSeen = new Map();  // player key -> last-rendered value, for change flashes
+
+// Sensible default direction per column: numbers where more is better sort
+// high-to-low; numbers where earlier/lower is better (or plain alpha) sort
+// low-to-high.
+const SORT_DEFAULT_DESC = new Set(["vor", "proj", "survival"]);
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) =>
@@ -48,28 +56,155 @@ function donut(segments, size = 26, thickness = 5) {
 // Rank sparkline: positional finish across seasons, inverted so up means better.
 // Rank is drawn on a log scale because RB1 to RB3 is a small move at the elite
 // end while RB30 to RB10 is a large one; a linear axis would flatten the second.
-function rankSpark(seasons, pos, w = 232, h = 54) {
+function rankSpark(seasons, pos, w = 260, h = 68) {
   const pts = seasons.filter((s) => s.rank);
   if (pts.length < 2) return `<div class="nodata">Not enough seasons to chart.</div>`;
   const L = (r) => Math.log(Math.max(r, 1));
   const maxL = Math.max(L(48), ...pts.map((s) => L(s.rank)));
-  const x = (i) => 4 + (i * (w - 8)) / (pts.length - 1);
-  const y = (r) => 6 + (L(r) / maxL) * (h - 24);
+  const x = (i) => 6 + (i * (w - 12)) / (pts.length - 1);
+  const y = (r) => 8 + (L(r) / maxL) * (h - 30);
   const line = pts.map((s, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(s.rank).toFixed(1)}`).join("");
-  const dots = pts.map((s, i) => `
-    <circle cx="${x(i).toFixed(1)}" cy="${y(s.rank).toFixed(1)}" r="3.5"
-      fill="var(--${pos.toLowerCase()})" stroke="var(--s1)" stroke-width="1.5"><title>${
-      s.season}: ${pos}${s.rank}, ${s.points} pts in ${s.games} games</title></circle>`).join("");
+  const area = `M${x(0).toFixed(1)},${(h - 16).toFixed(1)} L` +
+    pts.map((s, i) => `${x(i).toFixed(1)},${y(s.rank).toFixed(1)}`).join(" L") +
+    ` L${x(pts.length - 1).toFixed(1)},${(h - 16).toFixed(1)} Z`;
+
+  // Color follows the entity (position) for the line, same as everywhere
+  // else on the board. Dot fill is a SECOND, deliberate encoding -- season
+  // quality -- so a great year and a rough one are visually distinct even
+  // before reading the number.
+  const dots = pts.map((s, i) => {
+    const tier = rankTier(pos, s.rank);
+    const cx = x(i).toFixed(1), cy = y(s.rank).toFixed(1);
+    // Rookie season gets a visible ring around the dot -- a real, sourced
+    // marker (the official roster's rookie_year), not a guess from experience.
+    const rookieRing = s.rookie
+      ? `<circle cx="${cx}" cy="${cy}" r="6.5" fill="none" stroke="var(--accent)"
+           stroke-width="1.3" stroke-dasharray="2 1.6" pointer-events="none"></circle>` : "";
+    return `
+    <circle class="sparkhit" cx="${cx}" cy="${cy}" r="9" fill="transparent"
+      data-season="${s.season}" data-rank="${s.rank}" data-pred="${s.predicted_rank ?? ""}"
+      data-points="${s.points}" data-games="${s.games}" data-age="${s.age ?? ""}"
+      data-rookie="${s.rookie ? "1" : ""}" data-pos="${pos}" tabindex="0"
+      aria-label="${s.season}${s.rookie ? " (rookie season)" : ""}: ${pos}${s.rank}, ${s.points} points in ${s.games} games"></circle>
+    ${rookieRing}
+    <circle class="sparkdot" cx="${cx}" cy="${cy}" r="3.5"
+      fill="${TIER_COLOR[tier]}" stroke="var(--s1)" stroke-width="1.5" pointer-events="none"></circle>`;
+  }).join("");
   const labels = pts.map((s, i) =>
     `<text x="${x(i).toFixed(1)}" y="${h - 3}" text-anchor="middle" class="sl">${
       String(s.season).slice(2)}</text>`).join("");
   const best = pts.map((s, i) => (i === 0 || i === pts.length - 1)
-    ? `<text x="${x(i).toFixed(1)}" y="${(y(s.rank) - 8).toFixed(1)}" text-anchor="middle" class="sr">${pos}${s.rank}</text>` : "").join("");
+    ? `<text x="${x(i).toFixed(1)}" y="${(y(s.rank) - 9).toFixed(1)}" text-anchor="middle" class="sr">${pos}${s.rank}</text>` : "").join("");
   return `<svg class="spark" viewBox="0 0 ${w} ${h}" width="100%" height="${h}" role="img"
-    aria-label="Positional finish by season">
+    aria-label="Positional finish by season, hover a point for detail">
+    <path d="${area}" fill="var(--${pos.toLowerCase()})" opacity=".10" stroke="none"/>
     <path d="${line}" fill="none" stroke="var(--${pos.toLowerCase()})" stroke-width="2"
       stroke-linejoin="round" stroke-linecap="round" opacity=".85"/>
     ${dots}${labels}${best}</svg>`;
+}
+
+// One tooltip element, reused across every sparkline via delegation -- the
+// SVG itself is rebuilt on every profile open, so listeners live on a stable
+// ancestor rather than being re-attached per dot.
+function ensureSparkTip() {
+  let el = document.getElementById("sparktip");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "sparktip";
+    el.className = "sparktip";
+    el.hidden = true;
+    document.body.appendChild(el);
+  }
+  return el;
+}
+
+function sparkTipContent(d) {
+  const pos = d.dataset.pos, rank = +d.dataset.rank, pred = d.dataset.pred ? +d.dataset.pred : null;
+  const pts = d.dataset.points, games = +d.dataset.games, age = d.dataset.age;
+  const missed = games <= 12;
+  let deltaLine = "";
+  if (pred != null) {
+    const delta = pred - rank;   // positive = finished better than drafted
+    const word = delta > 1 ? "beat" : delta < -1 ? "missed" : "matched";
+    const cls = delta > 1 ? "up" : delta < -1 ? "down" : "";
+    deltaLine = `<div class="stiprow"><span>Preseason rank</span><b>${pos}${pred}</b></div>
+      <div class="stiprow ${cls}"><span>Vs. preseason</span><b>${
+        word === "matched" ? "Right on schedule" : `${word} it by ${Math.abs(delta)}`}</b></div>`;
+  }
+  const rookieBadge = d.dataset.rookie ? `<span class="rookiebadge">Rookie</span>` : "";
+  return `
+    <div class="stiphead">${d.dataset.season} <span class="pos ${pos}">${pos}${rank}</span>${rookieBadge}</div>
+    ${deltaLine}
+    <div class="stiprow"><span>Points</span><b>${pts}</b></div>
+    <div class="stiprow"><span>Games</span><b>${games}${missed ? " — missed significant time" : ""}</b></div>
+    ${age ? `<div class="stiprow"><span>Age that season</span><b>${age}</b></div>` : ""}`;
+}
+
+// One tooltip trigger, two kinds of hoverable targets: a season dot (rich
+// season detail) and a scarcity-ladder block (which player occupies that
+// square). Both share the same floating tip element and positioning logic.
+function tipTargetOf(e) {
+  return e.target.closest(".sparkhit") || e.target.closest(".ladderblk");
+}
+function tipContentFor(d) {
+  return d.classList.contains("ladderblk")
+    ? `<div class="stiphead">${esc(d.dataset.name)}</div>
+       <div class="stiprow"><span>Position</span><b>${d.dataset.pos}</b></div>
+       <div class="stiprow"><span>Tier</span><b>${d.dataset.tier}</b></div>`
+    : sparkTipContent(d);
+}
+document.addEventListener("pointerover", (e) => {
+  const d = tipTargetOf(e);
+  if (!d) return;
+  const tip = ensureSparkTip();
+  tip.innerHTML = tipContentFor(d);
+  tip.hidden = false;
+  positionSparkTip(tip, d);
+});
+document.addEventListener("pointermove", (e) => {
+  const d = tipTargetOf(e);
+  const tip = document.getElementById("sparktip");
+  if (d && tip && !tip.hidden) positionSparkTip(tip, d);
+});
+document.addEventListener("pointerout", (e) => {
+  if (!tipTargetOf(e)) return;
+  const tip = document.getElementById("sparktip");
+  if (tip) tip.hidden = true;
+});
+// Delegated rather than wired per-block: the ladder is rebuilt on every
+// render, so binding here once covers every square without re-attaching.
+document.addEventListener("click", (e) => {
+  const blk = e.target.closest(".ladderblk");
+  if (blk && blk.dataset.key) openProfile(blk.dataset.key);
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Enter" && e.key !== " ") return;
+  const blk = e.target.closest(".ladderblk");
+  if (blk && blk.dataset.key) { e.preventDefault(); openProfile(blk.dataset.key); }
+});
+document.addEventListener("focusin", (e) => {
+  const d = tipTargetOf(e);
+  if (!d) return;
+  const tip = ensureSparkTip();
+  tip.innerHTML = tipContentFor(d);
+  tip.hidden = false;
+  positionSparkTip(tip, d);
+});
+document.addEventListener("focusout", (e) => {
+  if (!tipTargetOf(e)) return;
+  const tip = document.getElementById("sparktip");
+  if (tip) tip.hidden = true;
+});
+
+function positionSparkTip(tip, dotEl) {
+  const r = dotEl.getBoundingClientRect();
+  const tw = tip.offsetWidth || 180, th = tip.offsetHeight || 90;
+  let left = r.left + r.width / 2 - tw / 2;
+  let top = r.top - th - 10;
+  left = Math.max(8, Math.min(left, window.innerWidth - tw - 8));
+  if (top < 8) top = r.bottom + 10;
+  tip.style.left = left + "px";
+  tip.style.top = top + "px";
 }
 
 function face(shot, name, size = 38) {
@@ -86,10 +221,23 @@ async function openProfile(key) {
   const adj = d.adjustments.length
     ? d.adjustments.map((a) => `<li>${esc(a.note)}</li>`).join("")
     : `<li class="muted">No age or trajectory adjustment applied.</li>`;
-  const rows = [...d.seasons].reverse().map((s) => `
-    <tr><td>${s.season}</td><td><b>${d.pos}${s.rank}</b></td>
-      <td class="num">${s.points}</td><td class="num">${s.games}</td>
-      <td class="num">${s.ppg}</td></tr>`).join("");
+  const rows = [...d.seasons].reverse().map((s) => {
+    const tier = rankTier(d.pos, s.rank);
+    const delta = s.predicted_rank != null ? s.predicted_rank - s.rank : null;
+    const deltaTxt = delta == null ? "—"
+      : delta > 1 ? `<span class="up">beat by ${delta}</span>`
+      : delta < -1 ? `<span class="down">missed by ${-delta}</span>`
+      : "on schedule";
+    return `
+    <tr><td>${s.season}${s.rookie ? ' <span class="rookiebadge sm">R</span>' : ""}</td>
+      <td><b class="rankpill" style="color:${TIER_COLOR[tier]}">${d.pos}${s.rank}</b></td>
+      <td class="mut">${s.predicted_rank != null ? d.pos + s.predicted_rank : "—"}</td>
+      <td class="mut">${deltaTxt}</td>
+      <td class="num tnum">${s.points}</td>
+      <td class="num tnum">${s.games}${s.games <= 12 ? ' <span class="flag">Hurt</span>' : ""}</td>
+      <td class="num tnum">${s.ppg}</td>
+      <td class="num mut tnum">${s.age ?? "—"}</td></tr>`;
+  }).join("");
 
   panel.innerHTML = `
     <div class="pf">
@@ -106,12 +254,21 @@ async function openProfile(key) {
         </div>
       </div>
 
+      ${d.drafted
+        ? `<div class="pfdrafted">Already drafted</div>`
+        : `<button class="pfdraft" id="pfdraft">Draft ${esc(d.name)}</button>`}
+
       <h3>Positional finish by season</h3>
       ${rankSpark(d.seasons, d.pos)}
       ${d.seasons.length ? `<table class="pfseasons">
-        <thead><tr><th>Season</th><th>Finish</th><th class="num">Points</th>
-          <th class="num">Games</th><th class="num">Per&nbsp;game</th></tr></thead>
-        <tbody>${rows}</tbody></table>` : ""}
+        <thead><tr><th>Season</th><th>Finish</th><th>Preseason</th><th>Vs. ADP</th>
+          <th class="num">Points</th><th class="num">Games</th>
+          <th class="num">Per&nbsp;game</th><th class="num">Age</th></tr></thead>
+        <tbody>${rows}</tbody></table>
+        <p class="tierlegend"><i style="background:var(--good)"></i>Elite finish
+          <i style="background:var(--fg-3)"></i>Startable
+          <i style="background:var(--critical)"></i>Below replacement
+          <span class="rookiedot"></span>Rookie season</p>` : ""}
 
       <h3>What this projection is built from</h3>
       <div class="pfrow"><span>Projected points</span><b>${d.proj}</b></div>
@@ -128,26 +285,69 @@ async function openProfile(key) {
       ${d.survival != null ? `<div class="pfrow"><span>Still there at pick ${d.horizon}</span>
         <b>${pct(d.survival)}%</b></div>` : ""}
     </div>`;
+  // Open transition: unhide, then flip a class on the next frame so the
+  // backdrop-fade + panel rise-and-scale actually has a starting state to
+  // transition from (setting hidden and the class in the same tick would
+  // let the browser collapse them into one paint with nothing to animate).
   panel.hidden = false;
+  panel.classList.remove("closing");
+  requestAnimationFrame(() => requestAnimationFrame(() => panel.classList.add("open")));
   $("pfclose").onclick = closeProfile;
-  panel.querySelector(".pf").focus?.();
+  const draftBtn = document.getElementById("pfdraft");
+  if (draftBtn) draftBtn.onclick = () => { closeProfile(); draft(d.key); };
+  panel.querySelector(".pf")?.focus?.();
 }
 
-function closeProfile() { $("profile").hidden = true; }
+function closeProfile() {
+  const panel = $("profile");
+  if (panel.hidden) return;
+  panel.classList.remove("open");
+  panel.classList.add("closing");
+  const done = () => { panel.hidden = true; panel.classList.remove("closing"); };
+  // If motion is reduced the transition never fires, so hide immediately
+  // rather than waiting on an event that will never arrive.
+  if (matchMedia("(prefers-reduced-motion: reduce)").matches) { done(); return; }
+  panel.addEventListener("transitionend", done, { once: true });
+  setTimeout(done, 260);   // safety net if transitionend does not fire
+}
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && !$("profile").hidden) closeProfile();
 });
+$("profile").addEventListener("click", (e) => {
+  if (e.target.id === "profile") closeProfile();   // backdrop, not the card itself
+});
 
-function probRing(p, size = 56) {
-  const R = 15.5, C = 2 * Math.PI * R, len = Math.max(p, 0) * C;
+function probRing(p, prev = null, size = 56) {
+  const R = 15.5, C = 2 * Math.PI * R;
+  const len = Math.max(p, 0) * C;
+  // Start the arc at the PREVIOUS value (if there is one) and transition to
+  // the new one via the id'd circle's own CSS transition -- the single
+  // number in this whole UI that visibly moves instead of snapping, because
+  // it is the number the hero card exists to explain.
+  const startLen = prev != null ? Math.max(prev, 0) * C : len;
   return `<svg width="${size}" height="${size}" viewBox="0 0 40 40" role="img"
     aria-label="${Math.round(p * 100)} percent"><circle cx="20" cy="20" r="${R}" fill="none"
       stroke="var(--s3)" stroke-width="5"/>
-    <circle cx="20" cy="20" r="${R}" fill="none" stroke="var(--good)" stroke-width="5"
-      stroke-linecap="round" stroke-dasharray="${len} ${C - len}"
-      transform="rotate(-90 20 20)"/>
+    <circle id="ringarc" cx="20" cy="20" r="${R}" fill="none" stroke="var(--good)" stroke-width="5"
+      stroke-linecap="round" stroke-dasharray="${startLen} ${C - startLen}"
+      transform="rotate(-90 20 20)" data-target="${len}" data-total="${C}"/>
     <text x="20" y="23.5" text-anchor="middle" class="ringtext">${Math.round(p * 100)}%</text></svg>`;
 }
+
+// Season-finish quality, bucketed against position-aware fixed thresholds.
+// Reuses the reserved status tokens (good/critical) rather than inventing a
+// new hue -- this is a QUALITY read layered on top of the position-colored
+// line, not a repeat of player identity.
+const TIER_CUTOFFS = {
+  RB: [12, 30], WR: [12, 30], TE: [6, 14], QB: [6, 14], DEF: [6, 20], K: [6, 20],
+};
+function rankTier(pos, rank) {
+  const [elite, startable] = TIER_CUTOFFS[pos] || [12, 30];
+  if (rank <= elite) return "elite";
+  if (rank <= startable) return "startable";
+  return "low";
+}
+const TIER_COLOR = { elite: "var(--good)", startable: "var(--fg-2)", low: "var(--critical)" };
 
 async function api(path, opts) {
   const r = await fetch(path, opts);
@@ -271,18 +471,22 @@ function render() {
 }
 
 function renderHero() {
-  const [top, ...rest] = S.recommendations;
+  const top4 = S.recommendations.slice(0, 4);
+  const [top, ...restTop] = top4;
+  const slim = S.recommendations.slice(4);
   if (!top) {
     $("hero").innerHTML = `<div class="empty-state">No players left on the board.</div>`;
-    $("recs").innerHTML = ""; return;
+    $("compare").innerHTML = ""; $("recs").innerHTML = ""; return;
   }
   const hz = S.horizon_pick;
   const lead = S.is_my_turn ? "Take now" : "Top of your board";
   const prob = top.pick_prob;
+  const isNew = top.key !== lastHeroKey;
+  lastHeroKey = top.key;
   const tie = (top.tied_with || []).length
     ? `<div class="tie">Too close to call against ${esc(top.tied_with[0])}</div>` : "";
   $("hero").innerHTML = `
-    <div class="hero" data-key="${esc(top.key)}">
+    <div class="hero ${isNew ? "enter" : ""}" data-key="${esc(top.key)}">
       <div class="lead">${esc(lead)}</div>
       <div class="herotop">
         ${face(top.headshot, top.name, 52)}
@@ -292,7 +496,7 @@ function renderHero() {
             <span>${esc(top.team)}</span>${top.age ? `<span>· ${top.age}y</span>` : ""}
             <span>· ADP ${top.adp ?? "—"}</span></div>
         </div>
-        ${prob != null ? `<div class="probring">${probRing(prob)}
+        ${prob != null ? `<div class="probring" id="heroring">
           <span class="problabel">chance this<br>is the pick</span></div>` : ""}
       </div>
       ${tie}
@@ -305,14 +509,6 @@ function renderHero() {
           <span>chance he is still there at pick ${hz ?? "—"}${
             hz && S.my_next_pick && hz !== S.my_next_pick
               ? ` <span class="dim">(you also pick at ${S.my_next_pick})</span>` : ""}</span></div>
-        ${top.value_share != null ? `<div class="drivers">
-          <div class="drow"><span>Model preference</span>
-            <i><b style="width:${pct(top.value_share)}%"></b></i>
-            <em>${pct(top.value_share)}%</em></div>
-          ${prob != null ? `<div class="drow"><span>Simulated best pick</span>
-            <i><b style="width:${pct(prob)}%;background:var(--good)"></b></i>
-            <em>${pct(prob)}%</em></div>` : ""}
-        </div>` : ""}
         ${top.warnings.length ? `<ul class="reasons">
           ${top.warnings.map((w) => `<li class="w">${esc(w)}</li>`).join("")}</ul>` : ""}
       </div>
@@ -320,12 +516,55 @@ function renderHero() {
     </div>`;
   const h = $("hero").firstElementChild;
   h.querySelector(".pfbtn").onclick = (e) => { e.stopPropagation(); openProfile(top.key); };
-  h.onclick = () => draft(top.key);
+  h.onclick = () => openProfile(top.key);   // consistent with every other row -- see profile, then draft from its button
 
-  const alts = rest;   // already ordered by the number each row displays
-  $("recs").innerHTML = alts.map((r, i) => `
+  // The ring is inserted after the fact (not baked into the template above)
+  // so its arc can start from the PREVIOUS probability and transition to the
+  // new one -- the one number in this UI that visibly moves rather than
+  // snapping, because it is the number the whole card is arguing for.
+  const ringHost = $("heroring");
+  if (ringHost) {
+    ringHost.insertAdjacentHTML("afterbegin", probRing(prob, lastProb));
+    const arc = ringHost.querySelector("#ringarc");
+    if (arc) {
+      const target = +arc.dataset.target, total = +arc.dataset.total;
+      requestAnimationFrame(() => {
+        arc.style.transition = `stroke-dasharray var(--dur-slow) var(--ease-out)`;
+        arc.setAttribute("stroke-dasharray", `${target} ${total - target}`);
+      });
+    }
+    lastProb = prob;
+  }
+
+  // Compare panel: the field the hero is being chosen from, not just the
+  // winner in isolation. Both percentages are shown for every one of the top
+  // players, as large colored numbers rather than thin bars, so a close call
+  // between two or three real options is visible at a glance -- already
+  // ordered by the number each row displays (the simulated probability).
+  $("compare").innerHTML = top4.map((r, i) => {
+    const sim = r.pick_prob, val = r.value_share;
+    const simLeads = sim != null && val != null && sim >= val;
+    const flashKey = "cmp:" + r.key;
+    const justChanged = flashSeen.has(flashKey) && flashSeen.get(flashKey) !== sim;
+    flashSeen.set(flashKey, sim);
+    return `<button class="cmprow ${i === 0 ? "lead" : ""} ${justChanged ? "flash" : ""}" data-key="${esc(r.key)}">
+      <span class="cmprk">${i + 1}</span>
+      ${face(r.headshot, r.name, 30)}
+      <span class="cmpname"><b>${esc(r.name)}</b><span class="pos ${r.pos}">${r.pos}</span></span>
+      <span class="cmpnum ${simLeads ? "big" : ""}">
+        <b class="tnum" style="color:var(--good)">${sim != null ? pct(sim) + "%" : "—"}</b>
+        <span>simulated</span></span>
+      <span class="cmpnum ${!simLeads ? "big" : ""}">
+        <b class="tnum" style="color:var(--accent)">${val != null ? pct(val) + "%" : "—"}</b>
+        <span>value share</span></span>
+    </button>`;
+  }).join("");
+  [...$("compare").children].forEach((el) =>
+    (el.onclick = () => openProfile(el.dataset.key)));
+
+  $("recs").innerHTML = slim.map((r, i) => `
     <button class="rec" data-key="${esc(r.key)}">
-      <span class="rk">${i + 2}</span>
+      <span class="rk">${i + 5}</span>
       ${face(r.headshot, r.name, 26)}
       <span class="pos ${r.pos}">${r.pos}</span>
       <span class="nm">${esc(r.name)}</span>
@@ -334,7 +573,7 @@ function renderHero() {
         : `<b class="tnum">${signed(r.vona)}</b><span>vs next ${r.pos}</span>`}</span>
     </button>`).join("");
   [...$("recs").children].forEach((el) =>
-    (el.onclick = (e) => (e.shiftKey ? draft(el.dataset.key) : openProfile(el.dataset.key))));
+    (el.onclick = () => openProfile(el.dataset.key)));
 }
 
 // Tier ladder — the scarcity read. Each block group is a tier of remaining
@@ -350,8 +589,13 @@ function renderLadder() {
     const shown = d.tiers.slice(0, 3);
     const blocks = shown.map((t, ti) => {
       const n = Math.min(t.count, 12);
-      const cells = Array.from({ length: n }, () =>
-        `<i class="blk t${ti}" style="background:var(--${p.toLowerCase()})"></i>`).join("");
+      // Every visible square is hoverable to its actual player -- the whole
+      // point of drawing them individually rather than as one solid bar.
+      const cells = Array.from({ length: n }, (_, bi) => {
+        const nm = t.names[bi];
+        return `<i class="blk t${ti} ${nm ? "ladderblk" : ""}" style="background:var(--${p.toLowerCase()})"
+          ${nm ? `data-name="${esc(nm.name)}" data-key="${esc(nm.key)}" data-tier="${t.tier}" data-pos="${p}" tabindex="0"` : ""}></i>`;
+      }).join("");
       const more = t.count > n ? `<i class="more t${ti}">+${t.count - n}</i>` : "";
       return cells + more + (ti < shown.length - 1 ? `<i class="gap"></i>` : "");
     }).join("");
@@ -363,26 +607,66 @@ function renderLadder() {
           <span class="cliff">${d.next_cliff > 0 ? `then \u2212${d.next_cliff} pts` : "flat from here"}</span>
         </div>
         <div class="blocks">${blocks}</div>
-        <div class="lanefoot">${esc(d.tiers[0].names.join(" \u00b7 "))}</div>
+        <div class="lanefoot">${esc(d.tiers[0].names.slice(0, 3).map((x) => x.name).join(" \u00b7 "))}</div>
       </div>`;
   }).join("");
+}
+
+function sortRows(rows) {
+  const { key, dir } = sortState;
+  const val = (p) => {
+    if (key === "name" || key === "pos" || key === "team") return (p[key] || "").toLowerCase();
+    const v = p[key];
+    return v == null ? (dir === 1 ? Infinity : -Infinity) : v;   // nulls sort last either way
+  };
+  return [...rows].sort((a, b) => {
+    const av = val(a), bv = val(b);
+    if (av < bv) return -1 * dir;
+    if (av > bv) return 1 * dir;
+    return 0;
+  });
+}
+
+function wireSortHeaders() {
+  document.querySelectorAll("#boardhead th[data-key]").forEach((th) => {
+    const k = th.dataset.key;
+    th.classList.toggle("active", k === sortState.key);
+    th.classList.toggle("desc", k === sortState.key && sortState.dir === -1);
+    th.onclick = () => {
+      if (sortState.key === k) {
+        sortState.dir *= -1;
+      } else {
+        sortState = { key: k, dir: SORT_DEFAULT_DESC.has(k) ? -1 : 1 };
+      }
+      renderBoard();
+    };
+  });
 }
 
 function renderBoard() {
   $("filters").innerHTML = ["ALL", ...POS].map((p) =>
     `<button class="${p === posFilter ? "on" : ""}" data-p="${p}">${p}</button>`).join("");
   [...$("filters").children].forEach((b) =>
-    (b.onclick = () => { posFilter = b.dataset.p; render(); }));
+    (b.onclick = () => { posFilter = b.dataset.p; renderBoard(); }));
+  wireSortHeaders();
 
-  const rows = S.players.filter((p) => posFilter === "ALL" || p.pos === posFilter).slice(0, 90);
-  if (!rows.length) {
-    $("board").innerHTML = `<tr><td colspan="9"><div class="empty-state">No ${posFilter} players left.</div></td></tr>`;
+  const filtered = S.players.filter((p) => posFilter === "ALL" || p.pos === posFilter).slice(0, 90);
+  if (!filtered.length) {
+    $("board").innerHTML = `<tr><td colspan="10"><div class="empty-state">No ${posFilter} players left.</div></td></tr>`;
     return;
   }
+  // Tier-cliff dividers mean something whenever row order tracks tier
+  // grouping -- true for VOR order (either direction, since VOR and tier move
+  // together) and for an explicit tier sort (either direction). Sorted by
+  // anything else -- name, ADP, age -- adjacent rows aren't adjacent in value
+  // any more, so the divider would draw a line between rows that aren't
+  // actually a cliff.
+  const showCliffs = posFilter !== "ALL" && (sortState.key === "vor" || sortState.key === "tier");
+  const rows = sortRows(filtered);
   const maxV = Math.max(S.max_vor, 1);
   let prev = null;
   $("board").innerHTML = rows.map((p) => {
-    const cliff = posFilter !== "ALL" && prev !== null && p.tier !== prev;
+    const cliff = showCliffs && prev !== null && p.tier !== prev;
     prev = p.tier;
     const w = Math.max(2, (Math.max(p.vor, 0) / maxV) * 100);
     const s = p.survival;
@@ -392,20 +676,20 @@ function renderBoard() {
       <td><span class="pname">${face(p.headshot, p.name, 22)}${esc(p.name)}${flag}</span></td>
       <td><span class="posdot ${p.pos}">${p.pos}</span></td>
       <td class="mut">${esc(p.team)}</td>
-      <td class="num mut">${p.age ?? "—"}</td>
-      <td class="num mut">${p.tier}</td>
-      <td class="vbar"><i style="width:${w}%;background:var(--${p.pos.toLowerCase()})"></i><b>${p.vor}</b></td>
-      <td class="num mut">${p.proj}</td>
-      <td class="num mut">${p.adp ?? "—"}</td>
-      <td class="num mut">${p.bye ?? "—"}</td>
+      <td class="num mut tnum">${p.age ?? "—"}</td>
+      <td class="num mut tnum">${p.tier}</td>
+      <td class="vbar"><i style="width:${w}%;background:var(--${p.pos.toLowerCase()})"></i><b class="tnum">${p.vor}</b></td>
+      <td class="num mut tnum">${p.proj}</td>
+      <td class="num mut tnum">${p.adp ?? "—"}</td>
+      <td class="num mut tnum">${p.bye ?? "—"}</td>
       <td class="num">${s == null ? '<span class="mut">—</span>' : `
         <span class="meter"><i><b style="width:${pct(s)}%;background:${seqFor(s)}"></b></i>
-        <span class="mut">${pct(s)}%</span></span>`}</td>
+        <span class="mut tnum">${pct(s)}%</span></span>`}</td>
     </tr>`;
   }).join("");
   [...$("board").children].forEach((tr) => {
     if (!tr.dataset.key) return;
-    tr.onclick = (e) => (e.shiftKey ? draft(tr.dataset.key) : openProfile(tr.dataset.key));
+    tr.onclick = () => openProfile(tr.dataset.key);
   });
 }
 

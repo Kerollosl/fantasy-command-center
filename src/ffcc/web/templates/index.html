@@ -37,6 +37,7 @@
         <h2>Your move <span class="tag">click a player for their full record</span></h2>
         <div class="roundtip" id="roundtip"></div>
         <div id="hero"></div>
+        <div id="compare" class="compare"></div>
         <div id="recs"></div>
       </section>
     </div>
@@ -51,11 +52,17 @@
         <div class="filters" id="filters"></div>
         <div class="tablewrap">
           <table>
-            <thead><tr>
-              <th scope="col">Player</th><th scope="col">Pos</th><th scope="col">Team</th>
-              <th scope="col" class="num">Age</th><th scope="col" class="num">Tier</th><th scope="col" title="Projected points above a freely available starter at this position">Points above replacement</th>
-              <th scope="col" class="num">Proj</th><th scope="col" class="num">ADP</th>
-              <th scope="col" class="num">Bye</th><th scope="col" class="num" title="Chance he is still on the board at your next real decision point">Still there?</th>
+            <thead><tr id="boardhead">
+              <th scope="col" data-key="name">Player</th>
+              <th scope="col" data-key="pos">Pos</th>
+              <th scope="col" data-key="team">Team</th>
+              <th scope="col" class="num" data-key="age">Age</th>
+              <th scope="col" class="num" data-key="tier">Tier</th>
+              <th scope="col" data-key="vor" title="Projected points above a freely available starter at this position">Points above replacement</th>
+              <th scope="col" class="num" data-key="proj">Proj</th>
+              <th scope="col" class="num" data-key="adp">ADP</th>
+              <th scope="col" class="num" data-key="bye">Bye</th>
+              <th scope="col" class="num" data-key="survival" title="Chance he is still on the board at your next real decision point">Still there?</th>
             </tr></thead>
             <tbody id="board"></tbody>
           </table>

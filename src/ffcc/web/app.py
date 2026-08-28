@@ -67,8 +67,13 @@ def _scarcity(state, players, cfg, hazards, my_next):
                 tiers.append({"tier": p.tier, "count": 1,
                               "max_vor": round(p.vor, 1), "min_vor": round(p.vor, 1),
                               "names": []})
-            if len(tiers[-1]["names"]) < 3:
-                tiers[-1]["names"].append(p.name)
+            # 12 matches the number of blocks the ladder actually draws per tier
+            # (the rest fold into a "+N" count) -- keep this in sync with the
+            # frontend's block-rendering cap so every visible square resolves to
+            # an actual player. `key` lets a click open that player's profile
+            # without a fragile name-only lookup on the client.
+            if len(tiers[-1]["names"]) < 12:
+                tiers[-1]["names"].append({"name": p.name, "key": p.key})
         top = tiers[0]
         # How far value falls once this tier is exhausted.
         cliff = (top["min_vor"] - tiers[1]["max_vor"]) if len(tiers) > 1 else 0.0

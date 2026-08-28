@@ -37,7 +37,7 @@ AGE_MIN, AGE_MAX = 21, 36
 MAX_STEP = 0.30
 
 
-def _birth_years() -> dict[str, int]:
+def birth_years() -> dict[str, int]:
     out: dict[str, int] = {}
     for season in ROSTER_SEASONS:
         try:
@@ -58,7 +58,7 @@ def _birth_years() -> dict[str, int]:
 
 def fit(cfg: LeagueConfig) -> dict[str, dict[str, float]]:
     """position -> {age: multiplier applied moving from that age to the next}."""
-    births = _birth_years()
+    births = birth_years()
     seasons: dict[tuple[str, str, int], dict] = {}
 
     for year in FIT_SEASONS:

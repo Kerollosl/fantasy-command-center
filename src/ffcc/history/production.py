@@ -14,7 +14,10 @@ from dataclasses import dataclass
 
 from ..config import DATA_DIR, LeagueConfig
 from ..identity.normalize import norm_name, norm_position
+from ..projections.aging import ROSTER_SEASONS, birth_years
 from ..projections.scoring import season_totals
+from ..sources import crosswalk
+from ..sources import ffc as ffc_src
 from ..sources import nflverse
 
 log = logging.getLogger(__name__)
@@ -37,16 +40,64 @@ class SeasonLine:
     points: float
     games: int
     ppg: float
+    predicted_rank: int | None = None    # preseason ADP-implied positional rank
+    age: int | None = None               # player's age that season
+    rookie: bool = False                 # first NFL season, per the official roster record
 
     def as_dict(self) -> dict:
         return {
             "season": self.season, "rank": self.rank, "points": self.points,
             "games": self.games, "ppg": self.ppg,
+            "predicted_rank": self.predicted_rank, "age": self.age,
+            "rookie": self.rookie,
         }
+
+
+def _predicted_ranks(season: int, fmt: str, teams: int) -> dict[str, int]:
+    """(norm_name -> preseason positional rank), from that year's FFC ADP.
+
+    Reuses the same historical-ADP join used for the round-value insight.
+    Draft position is a real preseason forecast: comparing it to how the
+    season actually finished is what tells the "beat/missed his ADP" story.
+    """
+    try:
+        entries, _ = ffc_src.fetch_adp(fmt=fmt, teams=teams, year=season, ttl=30 * 24 * 3600)
+    except Exception:  # noqa: BLE001
+        return {}
+    if not entries:
+        return {}
+    out: dict[str, int] = {}
+    by_pos: dict[str, list] = {}
+    for e in sorted(entries, key=lambda x: x.adp):
+        by_pos.setdefault(norm_position(e.position), []).append(e)
+    for pos, lst in by_pos.items():
+        for rank, e in enumerate(lst, start=1):
+            out[f"{norm_name(e.name)}|{pos}"] = rank
+    return out
+
+
+def _rookie_years() -> dict[str, int]:
+    """(norm_name -> rookie_year), from the official roster record rather than
+    inferred from years_exp -- which can be off by one for a practice-squad or
+    injury-redshirt year."""
+    out: dict[str, int] = {}
+    for season in ROSTER_SEASONS:
+        try:
+            df = crosswalk.season_roster(season)
+        except Exception:  # noqa: BLE001
+            continue
+        for row in df.itertuples():
+            name = getattr(row, "full_name", None)
+            ry = getattr(row, "rookie_year", None)
+            if name and ry and not (isinstance(ry, float) and ry != ry):  # skip NaN
+                out.setdefault(norm_name(name), int(ry))
+    return out
 
 
 def build(cfg: LeagueConfig, seasons=DEFAULT_SEASONS) -> dict[str, list[dict]]:
     """`"<norm_name>|<POS>" -> [season lines]`, most recent last."""
+    births = birth_years()
+    rookies = _rookie_years()
     out: dict[str, list[dict]] = {}
     for season in seasons:
         try:
@@ -55,17 +106,23 @@ def build(cfg: LeagueConfig, seasons=DEFAULT_SEASONS) -> dict[str, list[dict]]:
             log.warning("production history: season %s unavailable (%s)", season, exc)
             continue
 
+        predicted = _predicted_ranks(season, cfg.adp_format, cfg.teams)
         tot = tot.copy()
         tot["pos"] = tot["position"].map(norm_position)
         for pos in RANKED_POSITIONS:
             sub = tot[tot["pos"] == pos].sort_values("points", ascending=False)
             for rank, row in enumerate(sub.itertuples(), start=1):
-                key = f"{norm_name(row.player_display_name)}|{pos}"
+                name = norm_name(row.player_display_name)
+                key = f"{name}|{pos}"
                 games = int(row.games) or 1
+                by = births.get(name)
                 out.setdefault(key, []).append(
                     SeasonLine(
                         season=season, rank=rank, points=round(float(row.points), 1),
                         games=int(row.games), ppg=round(float(row.points) / games, 1),
+                        predicted_rank=predicted.get(key),
+                        age=(season - by) if by else None,
+                        rookie=(rookies.get(name) == season),
                     ).as_dict()
                 )
     for lines in out.values():

@@ -12,3 +12,8 @@ data/*.db
 data/*.sqlite
 config/secrets.yaml
 .env
+
+# Machine-local agent config
+.claude/settings.local.json
+.impeccable/config.local.json
+.impeccable/hook.cache.json

@@ -35,9 +35,9 @@ def cmd_snapshot(args):
     prod = load_production(b.cfg, refresh=args.refresh)
     print(f"  {len(prod)} player histories")
 
-    print("Caching headshots...")
-    n = cache_media(b)
-    print(f"  {n} headshots cached locally")
+    print("Caching headshots and team logos...")
+    n_faces, n_logos = cache_media(b)
+    print(f"  {n_faces} headshots, {n_logos} team logos cached locally")
 
     if b.round_value:
         print(f"  round-value table over {len(b.round_value.get('seasons', []))} seasons")

@@ -672,13 +672,20 @@ function renderBoard() {
     const s = p.survival;
     const flag = p.injury
       ? `<span class="flag ${p.injury === "Questionable" ? "q" : ""}">${esc(p.injury.slice(0, 4))}</span>` : "";
-    return `<tr class="${cliff ? "cliff" : ""}" data-key="${esc(p.key)}">
+    // One position signal, not three: the whole row carries the tint, so a
+    // separate colored dot and a colored bar are no longer saying the same
+    // thing twice. The bar's own fill goes neutral -- length still carries
+    // magnitude, color no longer repeats identity.
+    const teamCell = p.team_logo
+      ? `<img class="tlogo" src="/logos/${esc(p.team_logo)}" width="18" height="18" alt="${esc(p.team)}" title="${esc(p.team)}" loading="lazy">`
+      : `<span class="mut">${esc(p.team)}</span>`;
+    return `<tr class="postint ${p.pos} ${cliff ? "cliff" : ""}" data-key="${esc(p.key)}" data-team="${esc(p.team)}">
       <td><span class="pname">${face(p.headshot, p.name, 22)}${esc(p.name)}${flag}</span></td>
-      <td><span class="posdot ${p.pos}">${p.pos}</span></td>
-      <td class="mut">${esc(p.team)}</td>
+      <td>${p.pos}</td>
+      <td>${teamCell}</td>
       <td class="num mut tnum">${p.age ?? "—"}</td>
       <td class="num mut tnum">${p.tier}</td>
-      <td class="vbar"><i style="width:${w}%;background:var(--${p.pos.toLowerCase()})"></i><b class="tnum">${p.vor}</b></td>
+      <td class="vbar"><i style="width:${w}%"></i><b class="tnum">${p.vor}</b></td>
       <td class="num mut tnum">${p.proj}</td>
       <td class="num mut tnum">${p.adp ?? "—"}</td>
       <td class="num mut tnum">${p.bye ?? "—"}</td>

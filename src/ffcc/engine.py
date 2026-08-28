@@ -13,7 +13,7 @@ from .draft.state import DraftState
 from .history.production import load_or_build as load_production
 from .history.rounds import load_or_build as load_round_value
 from .identity.resolver import ResolutionReport, build_players
-from .sources import crosswalk, headshots
+from .sources import crosswalk, headshots, logos
 from .projections.blend import attach_projections
 from .projections.vor import attach_tiers, attach_vor
 
@@ -156,6 +156,7 @@ def _attach_bio(players, season: int) -> None:
             continue
         p.headshot = headshots.local_name(rec["headshot"]) or None
         p.birth_date = rec["birth_date"]
+        p.team_logo = logos.local_name(p.team)
         if rec["birth_date"] and not p.age:
             try:
                 b = _dt.date.fromisoformat(rec["birth_date"])
@@ -180,5 +181,6 @@ def cache_media(board: "Board", season: int = 2026) -> int:
         and (norm_name(r.get("full_name") or ""), norm_position(r.get("position"))) in want
     ]
     got = headshots.cache_all(urls)
+    got_logos = logos.cache_all({p.team for p in board.players if p.team})
     _attach_bio(board.players, season)
-    return len(got)
+    return len(got), len(got_logos)

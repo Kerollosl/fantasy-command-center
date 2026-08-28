@@ -23,6 +23,9 @@ app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
 _shots = DATA_DIR / "headshots"
 _shots.mkdir(parents=True, exist_ok=True)
 app.mount("/headshots", StaticFiles(directory=_shots), name="headshots")
+_logos = DATA_DIR / "logos"
+_logos.mkdir(parents=True, exist_ok=True)
+app.mount("/logos", StaticFiles(directory=_logos), name="logos")
 
 BOARD = None
 
@@ -40,7 +43,7 @@ def _player_json(p, b, surv=None):
         "adp": p.adp, "bye": p.bye, "proj": p.proj_points, "vor": p.vor,
         "tier": p.tier, "injury": p.injury_status,
         "depth": p.depth_chart_order, "survival": surv,
-        "age": p.age, "headshot": p.headshot,
+        "age": p.age, "headshot": p.headshot, "team_logo": p.team_logo,
     }
 
 
@@ -197,6 +200,7 @@ def snapshot():
             "survival": r.survival_next, "adp": r.player.adp, "tier": r.player.tier,
             "reasons": r.reasons, "warnings": r.warnings,
             "headshot": r.player.headshot, "age": r.player.age,
+            "team_logo": r.player.team_logo,
             "value_share": shares.get(r.player.key),
             "pick_prob": round(o.probability, 4) if o else None,
             "prob_low": round(o.low, 4) if o else None,
@@ -291,7 +295,7 @@ def player_profile(key: str):
         "ok": True,
         "key": p.key, "name": p.name, "pos": p.position, "team": p.team,
         "age": p.age, "bye": p.bye, "adp": p.adp, "tier": p.tier,
-        "headshot": p.headshot, "injury": p.injury_status,
+        "headshot": p.headshot, "team_logo": p.team_logo, "injury": p.injury_status,
         "depth": p.depth_chart_order, "years_exp": p.years_exp,
         "proj": p.proj_points, "vor": p.vor,
         "proj_market": p.proj_market, "proj_baseline": p.proj_baseline,

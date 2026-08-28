@@ -58,6 +58,7 @@ class Player:
     adjustments: list = field(default_factory=list)
     headshot: str | None = None
     birth_date: str | None = None
+    team_logo: str | None = None
     vor: float = 0.0
     tier: int = 0
 

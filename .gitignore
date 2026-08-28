@@ -10,6 +10,7 @@ venv/
 # All of it is rebuilt by `ffcc snapshot` -- none belongs in the repo.
 data/cache/
 data/headshots/
+data/logos/
 data/production.json
 data/aging.json
 data/round_value.json

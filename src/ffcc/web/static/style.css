@@ -154,12 +154,24 @@ section + section{margin-top:20px}
 .gr .donut{margin-right:1px}
 
 /* ─── position marker: colour leads, letters keep it readable ── */
-.posdot{display:inline-flex;align-items:center;gap:5px;font-size:10.5px;
-  font-weight:620;letter-spacing:.2px;color:var(--fg-2)}
-.posdot::before{content:"";width:8px;height:8px;border-radius:2px;flex:none;background:var(--fg-4)}
-.posdot.RB::before{background:var(--rb)} .posdot.WR::before{background:var(--wr)}
-.posdot.QB::before{background:var(--qb)} .posdot.TE::before{background:var(--te)}
-.posdot.DEF::before{background:var(--def)} .posdot.K::before{background:var(--k)}
+/* One position signal per row: a full-row tint, not a dot plus a matching
+   bar repeating the same identity. Low opacity so text everywhere in the row
+   keeps its contrast; the position letters carry the plain-text fallback. */
+tbody tr.postint.RB{background:rgba(74,166,81,.09)}
+tbody tr.postint.WR{background:rgba(54,115,203,.11)}
+tbody tr.postint.QB{background:rgba(199,98,146,.10)}
+tbody tr.postint.TE{background:rgba(194,130,0,.09)}
+tbody tr.postint.DEF{background:rgba(128,89,187,.11)}
+tbody tr.postint.K{background:rgba(0,150,157,.10)}
+tbody tr.postint.RB:hover{background:rgba(74,166,81,.15)}
+tbody tr.postint.WR:hover{background:rgba(54,115,203,.17)}
+tbody tr.postint.QB:hover{background:rgba(199,98,146,.16)}
+tbody tr.postint.TE:hover{background:rgba(194,130,0,.15)}
+tbody tr.postint.DEF:hover{background:rgba(128,89,187,.17)}
+tbody tr.postint.K:hover{background:rgba(0,150,157,.16)}
+#board td:nth-child(2){font-size:10.5px;font-weight:700;letter-spacing:.3px;color:var(--fg-2)}
+
+.tlogo{display:block;object-fit:contain;vertical-align:middle}
 
 /* ─── position identity ──────────────────────────────────────── */
 .pos{display:inline-flex;align-items:center;justify-content:center;min-width:31px;
@@ -250,7 +262,7 @@ tbody tr.cliff td{border-bottom:1px solid var(--warning)}
 /* inline magnitude bar: VOR as length, not just a number */
 .vbar{position:relative;min-width:74px}
 .vbar i{position:absolute;left:0;top:50%;transform:translateY(-50%);height:14px;
-  border-radius:2px;opacity:.5}
+  border-radius:2px;background:rgba(255,255,255,.16)}
 .vbar b{position:relative;font-weight:600;padding-left:5px}
 
 /* survival meter: sequential ramp, magnitude not status */

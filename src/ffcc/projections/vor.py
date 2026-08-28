@@ -65,3 +65,33 @@ def attach_tiers(players, max_tiers: int = 12) -> None:
             if gaps[i - 1] > threshold and tier < max_tiers:
                 tier += 1
             lst[i].tier = tier
+
+
+def attach_ranks(players) -> None:
+    """Overall and positional rank by VOR (the board's own valuation), plus
+    each player's positional AND overall rank by this season's ADP -- the
+    market's own "who's predicted where" answer, using the same convention
+    (RB4, WR12) the rest of the app already reports historical finishes in.
+
+    Both an overall and a positional version exist because the right one to
+    show depends on what's on screen: mix every position together and a
+    positional-only rank is misleading (everyone reads "1-5"), but filtered
+    to one position the positional rank is the only one that means anything.
+    """
+    for i, p in enumerate(sorted(players, key=lambda x: -x.vor), start=1):
+        p.overall_rank = i
+
+    with_adp_all = [p for p in players if p.adp is not None]
+    for i, p in enumerate(sorted(with_adp_all, key=lambda x: x.adp), start=1):
+        p.predicted_rank_overall = i
+
+    by_pos: dict[str, list] = {}
+    for p in players:
+        by_pos.setdefault(p.position, []).append(p)
+
+    for pos, group in by_pos.items():
+        for i, p in enumerate(sorted(group, key=lambda x: -x.vor), start=1):
+            p.pos_rank = i
+        with_adp = [p for p in group if p.adp is not None]
+        for i, p in enumerate(sorted(with_adp, key=lambda x: x.adp), start=1):
+            p.predicted_rank = i

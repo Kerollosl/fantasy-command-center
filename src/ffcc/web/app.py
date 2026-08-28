@@ -44,6 +44,10 @@ def _player_json(p, b, surv=None):
         "tier": p.tier, "injury": p.injury_status,
         "depth": p.depth_chart_order, "survival": surv,
         "age": p.age, "headshot": p.headshot, "team_logo": p.team_logo,
+        "overall_rank": p.overall_rank, "pos_rank": p.pos_rank,
+        "predicted_rank": p.predicted_rank, "last_year_rank": p.last_year_rank,
+        "predicted_rank_overall": p.predicted_rank_overall,
+        "last_year_rank_overall": p.last_year_rank_overall,
     }
 
 
@@ -237,6 +241,7 @@ def snapshot():
         "teams": cfg.teams,
         "rounds": cfg.rounds,
         "my_slot": cfg.my_draft_slot,
+        "flex_eligible": cfg.flex_eligible,
         "my_picks": cfg.my_pick_numbers(),
         "current_pick": st.current_pick,
         "total_picks": cfg.total_picks,

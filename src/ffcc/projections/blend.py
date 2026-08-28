@@ -45,6 +45,20 @@ def attach_projections(players, scoring, current_season=2026, fmt="ppr", teams=1
         except Exception:  # noqa: BLE001 - signals are an enhancement, not a dependency
             aging, production = {}, {}
 
+    # Last season's finish rank across every position combined, computed once
+    # up front rather than per player -- the positional version of this rank
+    # is already stored per season line, but mixing positions on screen (the
+    # unfiltered board) needs a rank on the same shared scale, not "everyone
+    # reads RB3-ish small numbers that mean different things."
+    last_year_overall: dict[str, int] = {}
+    last_season = current_season - 1
+    last_year_lines = [
+        (key, ln["points"]) for key, lines in production.items()
+        for ln in lines if ln["season"] == last_season
+    ]
+    for i, (key, _pts) in enumerate(sorted(last_year_lines, key=lambda kv: -kv[1]), start=1):
+        last_year_overall[key] = i
+
     # Positional ADP rank drives the market term.
     by_pos: dict[str, list] = {}
     for p in sorted(players, key=lambda x: (x.adp if x.adp is not None else 9999)):
@@ -85,8 +99,12 @@ def attach_projections(players, scoring, current_season=2026, fmt="ppr", teams=1
                             f"damped because the market already prices age)",
                 })
 
-            lines = production.get(f"{norm_name(p.name)}|{p.position}", [])
+            key = f"{norm_name(p.name)}|{p.position}"
+            lines = production.get(key, [])
             p.seasons = lines
+            last_year = next((ln for ln in lines if ln["season"] == last_season), None)
+            p.last_year_rank = last_year["rank"] if last_year else None
+            p.last_year_rank_overall = last_year_overall.get(key)
             if lines:
                 tr = rank_trajectory(lines)
                 p.trajectory = tr

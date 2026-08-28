@@ -59,6 +59,15 @@ class Player:
     headshot: str | None = None
     birth_date: str | None = None
     team_logo: str | None = None
+
+    # Board-wide rank context, filled in by projections.vor.attach_ranks and
+    # projections.blend.attach_projections.
+    overall_rank: int | None = None      # by VOR, among every draftable player
+    pos_rank: int | None = None          # by VOR, within position
+    predicted_rank: int | None = None    # this season's positional rank by ADP
+    last_year_rank: int | None = None    # positional finish rank, most recent completed season
+    predicted_rank_overall: int | None = None   # this season's rank by ADP, all positions
+    last_year_rank_overall: int | None = None   # finish rank by points, all positions, last season
     vor: float = 0.0
     tier: int = 0
 

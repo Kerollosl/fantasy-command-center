@@ -3,7 +3,7 @@
 
 let S = null, posFilter = "ALL", results = [], sel = 0, showGrid = false;
 let sortState = { key: "vor", dir: -1 };
-let lastHeroKey = null, lastProb = null;
+let lastHeroKey = null;
 const flashSeen = new Map();  // player key -> last-rendered value, for change flashes
 
 // Sensible default direction per column: numbers where more is better sort
@@ -127,8 +127,8 @@ function sparkTipContent(d) {
     const delta = pred - rank;   // positive = finished better than drafted
     const word = delta > 1 ? "beat" : delta < -1 ? "missed" : "matched";
     const cls = delta > 1 ? "up" : delta < -1 ? "down" : "";
-    deltaLine = `<div class="stiprow"><span>Preseason rank</span><b>${pos}${pred}</b></div>
-      <div class="stiprow ${cls}"><span>Vs. preseason</span><b>${
+    deltaLine = `<div class="stiprow"><span>Drafted around</span><b>${pos}${pred}</b></div>
+      <div class="stiprow ${cls}"><span>Vs. that ADP</span><b>${
         word === "matched" ? "Right on schedule" : `${word} it by ${Math.abs(delta)}`}</b></div>`;
   }
   const rookieBadge = d.dataset.rookie ? `<span class="rookiebadge">Rookie</span>` : "";
@@ -207,11 +207,19 @@ function positionSparkTip(tip, dotEl) {
   tip.style.top = top + "px";
 }
 
-function face(shot, name, size = 38) {
+function face(shot, name, size = 38, prefix = "/headshots/") {
   const initials = String(name || "").split(/\s+/).slice(0, 2).map((w) => w[0] || "").join("");
   return shot
-    ? `<img class="face" src="/headshots/${esc(shot)}" width="${size}" height="${size}" alt="" loading="lazy">`
+    ? `<img class="face" src="${prefix}${esc(shot)}" width="${size}" height="${size}" alt="" loading="lazy">`
     : `<span class="face blank" style="width:${size}px;height:${size}px">${esc(initials)}</span>`;
+}
+
+// A defense has no player photo -- its team logo IS its identity, so it takes
+// the same circular avatar slot a headshot would use everywhere else.
+function avatar(p, size = 38) {
+  return p.pos === "DEF"
+    ? face(p.team_logo, p.team, size, "/logos/")
+    : face(p.headshot, p.name, size);
 }
 
 async function openProfile(key) {
@@ -243,7 +251,7 @@ async function openProfile(key) {
     <div class="pf">
       <button class="pfclose" id="pfclose" aria-label="Close profile">×</button>
       <div class="pfhead">
-        ${face(d.headshot, d.name, 64)}
+        ${avatar(d, 64)}
         <div>
           <div class="pfname">${esc(d.name)}</div>
           <div class="pfmeta"><span class="pos ${d.pos}">${d.pos}</span>
@@ -261,7 +269,7 @@ async function openProfile(key) {
       <h3>Positional finish by season</h3>
       ${rankSpark(d.seasons, d.pos)}
       ${d.seasons.length ? `<table class="pfseasons">
-        <thead><tr><th>Season</th><th>Finish</th><th>Preseason</th><th>Vs. ADP</th>
+        <thead><tr><th>Season</th><th>Finish</th><th title="That season's ADP-implied positional rank -- the market's preseason prediction, not preseason-game stats">ADP</th><th>Vs. ADP</th>
           <th class="num">Points</th><th class="num">Games</th>
           <th class="num">Per&nbsp;game</th><th class="num">Age</th></tr></thead>
         <tbody>${rows}</tbody></table>
@@ -316,23 +324,6 @@ document.addEventListener("keydown", (e) => {
 $("profile").addEventListener("click", (e) => {
   if (e.target.id === "profile") closeProfile();   // backdrop, not the card itself
 });
-
-function probRing(p, prev = null, size = 56) {
-  const R = 15.5, C = 2 * Math.PI * R;
-  const len = Math.max(p, 0) * C;
-  // Start the arc at the PREVIOUS value (if there is one) and transition to
-  // the new one via the id'd circle's own CSS transition -- the single
-  // number in this whole UI that visibly moves instead of snapping, because
-  // it is the number the hero card exists to explain.
-  const startLen = prev != null ? Math.max(prev, 0) * C : len;
-  return `<svg width="${size}" height="${size}" viewBox="0 0 40 40" role="img"
-    aria-label="${Math.round(p * 100)} percent"><circle cx="20" cy="20" r="${R}" fill="none"
-      stroke="var(--s3)" stroke-width="5"/>
-    <circle id="ringarc" cx="20" cy="20" r="${R}" fill="none" stroke="var(--good)" stroke-width="5"
-      stroke-linecap="round" stroke-dasharray="${startLen} ${C - startLen}"
-      transform="rotate(-90 20 20)" data-target="${len}" data-total="${C}"/>
-    <text x="20" y="23.5" text-anchor="middle" class="ringtext">${Math.round(p * 100)}%</text></svg>`;
-}
 
 // Season-finish quality, bucketed against position-aware fixed thresholds.
 // Reuses the reserved status tokens (good/critical) rather than inventing a
@@ -480,7 +471,6 @@ function renderHero() {
   }
   const hz = S.horizon_pick;
   const lead = S.is_my_turn ? "Take now" : "Top of your board";
-  const prob = top.pick_prob;
   const isNew = top.key !== lastHeroKey;
   lastHeroKey = top.key;
   const tie = (top.tied_with || []).length
@@ -489,15 +479,13 @@ function renderHero() {
     <div class="hero ${isNew ? "enter" : ""}" data-key="${esc(top.key)}">
       <div class="lead">${esc(lead)}</div>
       <div class="herotop">
-        ${face(top.headshot, top.name, 52)}
+        ${avatar(top, 52)}
         <div class="heroid">
           <div class="nm">${esc(top.name)}</div>
           <div class="sub"><span class="pos ${top.pos}">${top.pos}</span>
             <span>${esc(top.team)}</span>${top.age ? `<span>· ${top.age}y</span>` : ""}
             <span>· ADP ${top.adp ?? "—"}</span></div>
         </div>
-        ${prob != null ? `<div class="probring" id="heroring">
-          <span class="problabel">chance this<br>is the pick</span></div>` : ""}
       </div>
       ${tie}
       ${S.disagreement ? `<div class="disagree">${esc(S.disagreement)}</div>` : ""}
@@ -518,24 +506,6 @@ function renderHero() {
   h.querySelector(".pfbtn").onclick = (e) => { e.stopPropagation(); openProfile(top.key); };
   h.onclick = () => openProfile(top.key);   // consistent with every other row -- see profile, then draft from its button
 
-  // The ring is inserted after the fact (not baked into the template above)
-  // so its arc can start from the PREVIOUS probability and transition to the
-  // new one -- the one number in this UI that visibly moves rather than
-  // snapping, because it is the number the whole card is arguing for.
-  const ringHost = $("heroring");
-  if (ringHost) {
-    ringHost.insertAdjacentHTML("afterbegin", probRing(prob, lastProb));
-    const arc = ringHost.querySelector("#ringarc");
-    if (arc) {
-      const target = +arc.dataset.target, total = +arc.dataset.total;
-      requestAnimationFrame(() => {
-        arc.style.transition = `stroke-dasharray var(--dur-slow) var(--ease-out)`;
-        arc.setAttribute("stroke-dasharray", `${target} ${total - target}`);
-      });
-    }
-    lastProb = prob;
-  }
-
   // Compare panel: the field the hero is being chosen from, not just the
   // winner in isolation. Both percentages are shown for every one of the top
   // players, as large colored numbers rather than thin bars, so a close call
@@ -549,14 +519,14 @@ function renderHero() {
     flashSeen.set(flashKey, sim);
     return `<button class="cmprow ${i === 0 ? "lead" : ""} ${justChanged ? "flash" : ""}" data-key="${esc(r.key)}">
       <span class="cmprk">${i + 1}</span>
-      ${face(r.headshot, r.name, 30)}
+      ${avatar(r, 30)}
       <span class="cmpname"><b>${esc(r.name)}</b><span class="pos ${r.pos}">${r.pos}</span></span>
       <span class="cmpnum ${simLeads ? "big" : ""}">
         <b class="tnum" style="color:var(--good)">${sim != null ? pct(sim) + "%" : "—"}</b>
-        <span>simulated</span></span>
+        <span>sim</span></span>
       <span class="cmpnum ${!simLeads ? "big" : ""}">
         <b class="tnum" style="color:var(--accent)">${val != null ? pct(val) + "%" : "—"}</b>
-        <span>value share</span></span>
+        <span>value</span></span>
     </button>`;
   }).join("");
   [...$("compare").children].forEach((el) =>
@@ -565,7 +535,7 @@ function renderHero() {
   $("recs").innerHTML = slim.map((r, i) => `
     <button class="rec" data-key="${esc(r.key)}">
       <span class="rk">${i + 5}</span>
-      ${face(r.headshot, r.name, 26)}
+      ${avatar(r, 26)}
       <span class="pos ${r.pos}">${r.pos}</span>
       <span class="nm">${esc(r.name)}</span>
       <span class="rt">${r.pick_prob != null
@@ -644,15 +614,18 @@ function wireSortHeaders() {
 }
 
 function renderBoard() {
-  $("filters").innerHTML = ["ALL", ...POS].map((p) =>
+  const flexPos = S.flex_eligible || ["RB", "WR", "TE"];
+  $("filters").innerHTML = ["ALL", "FLEX", ...POS].map((p) =>
     `<button class="${p === posFilter ? "on" : ""}" data-p="${p}">${p}</button>`).join("");
   [...$("filters").children].forEach((b) =>
     (b.onclick = () => { posFilter = b.dataset.p; renderBoard(); }));
   wireSortHeaders();
 
-  const filtered = S.players.filter((p) => posFilter === "ALL" || p.pos === posFilter).slice(0, 90);
+  const filtered = S.players.filter((p) =>
+    posFilter === "ALL" ? true : posFilter === "FLEX" ? flexPos.includes(p.pos) : p.pos === posFilter
+  ).slice(0, 90);
   if (!filtered.length) {
-    $("board").innerHTML = `<tr><td colspan="10"><div class="empty-state">No ${posFilter} players left.</div></td></tr>`;
+    $("board").innerHTML = `<tr><td colspan="14"><div class="empty-state">No ${posFilter} players left.</div></td></tr>`;
     return;
   }
   // Tier-cliff dividers mean something whenever row order tracks tier
@@ -661,7 +634,8 @@ function renderBoard() {
   // anything else -- name, ADP, age -- adjacent rows aren't adjacent in value
   // any more, so the divider would draw a line between rows that aren't
   // actually a cliff.
-  const showCliffs = posFilter !== "ALL" && (sortState.key === "vor" || sortState.key === "tier");
+  const singlePos = posFilter !== "ALL" && posFilter !== "FLEX";
+  const showCliffs = singlePos && (sortState.key === "vor" || sortState.key === "tier");
   const rows = sortRows(filtered);
   const maxV = Math.max(S.max_vor, 1);
   let prev = null;
@@ -676,13 +650,20 @@ function renderBoard() {
     // separate colored dot and a colored bar are no longer saying the same
     // thing twice. The bar's own fill goes neutral -- length still carries
     // magnitude, color no longer repeats identity.
-    const teamCell = p.team_logo
+    // A defense's team is already its whole identity -- shown as its avatar
+    // and its name ("Seattle Defense") -- so repeating the team here again is
+    // pure redundancy. Left blank rather than duplicated.
+    const teamCell = p.pos === "DEF" ? "" : p.team_logo
       ? `<img class="tlogo" src="/logos/${esc(p.team_logo)}" width="18" height="18" alt="${esc(p.team)}" title="${esc(p.team)}" loading="lazy">`
       : `<span class="mut">${esc(p.team)}</span>`;
     return `<tr class="postint ${p.pos} ${cliff ? "cliff" : ""}" data-key="${esc(p.key)}" data-team="${esc(p.team)}">
-      <td><span class="pname">${face(p.headshot, p.name, 22)}${esc(p.name)}${flag}</span></td>
+      <td><span class="pname">${avatar(p, 22)}${esc(p.name)}${flag}</span></td>
       <td>${p.pos}</td>
       <td>${teamCell}</td>
+      <td class="num mut tnum">${p.overall_rank ?? "—"}</td>
+      <td class="num mut tnum">${p.pos_rank ?? "—"}</td>
+      <td class="num mut tnum">${(singlePos ? p.predicted_rank : p.predicted_rank_overall) ?? "—"}</td>
+      <td class="num mut tnum">${(singlePos ? p.last_year_rank : p.last_year_rank_overall) ?? "—"}</td>
       <td class="num mut tnum">${p.age ?? "—"}</td>
       <td class="num mut tnum">${p.tier}</td>
       <td class="vbar"><i style="width:${w}%"></i><b class="tnum">${p.vor}</b></td>

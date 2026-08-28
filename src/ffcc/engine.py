@@ -15,7 +15,7 @@ from .history.rounds import load_or_build as load_round_value
 from .identity.resolver import ResolutionReport, build_players
 from .sources import crosswalk, headshots, logos
 from .projections.blend import attach_projections
-from .projections.vor import attach_tiers, attach_vor
+from .projections.vor import attach_ranks, attach_tiers, attach_vor
 
 log = logging.getLogger(__name__)
 
@@ -110,6 +110,7 @@ def build_board(cfg: LeagueConfig | None = None, season: int = 2026) -> Board:
                        teams=cfg.teams, cfg=cfg)
     replacement = attach_vor(players, cfg)
     attach_tiers(players)
+    attach_ranks(players)
 
     if report.unmatched_gsis:
         log.warning(
@@ -151,12 +152,15 @@ def _attach_bio(players, season: int) -> None:
 
     today = _dt.date.today()
     for p in players:
+        # Independent of the roster-bio match below: every player has a team,
+        # including DEF entries, which never appear in the roster file at all.
+        p.team_logo = logos.local_name(p.team)
+
         rec = bio.get((norm_name(p.name), p.position))
         if not rec:
             continue
         p.headshot = headshots.local_name(rec["headshot"]) or None
         p.birth_date = rec["birth_date"]
-        p.team_logo = logos.local_name(p.team)
         if rec["birth_date"] and not p.age:
             try:
                 b = _dt.date.fromisoformat(rec["birth_date"])

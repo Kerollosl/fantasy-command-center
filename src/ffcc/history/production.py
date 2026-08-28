@@ -13,7 +13,7 @@ import math
 from dataclasses import dataclass
 
 from ..config import DATA_DIR, LeagueConfig
-from ..identity.normalize import norm_name, norm_position
+from ..identity.normalize import norm_name, norm_position, norm_team
 from ..projections.aging import ROSTER_SEASONS, birth_years
 from ..projections.scoring import season_totals
 from ..sources import crosswalk
@@ -43,13 +43,14 @@ class SeasonLine:
     predicted_rank: int | None = None    # preseason ADP-implied positional rank
     age: int | None = None               # player's age that season
     rookie: bool = False                 # first NFL season, per the official roster record
+    team: str | None = None              # the team he played most of that season for
 
     def as_dict(self) -> dict:
         return {
             "season": self.season, "rank": self.rank, "points": self.points,
             "games": self.games, "ppg": self.ppg,
             "predicted_rank": self.predicted_rank, "age": self.age,
-            "rookie": self.rookie,
+            "rookie": self.rookie, "team": self.team,
         }
 
 
@@ -94,6 +95,21 @@ def _rookie_years() -> dict[str, int]:
     return out
 
 
+def _season_teams(weekly: "pd.DataFrame") -> dict:
+    """player_id -> the team he suited up for most that season.
+
+    A traded player has multiple teams across one season's weekly rows; the
+    majority team is the more informative single answer for a season summary
+    than either his first or his most recent one.
+    """
+    if "team" not in weekly.columns or "player_id" not in weekly.columns:
+        return {}
+    modes = weekly.groupby("player_id")["team"].agg(
+        lambda s: s.mode().iloc[0] if len(s.mode()) else None
+    )
+    return modes.to_dict()
+
+
 def build(cfg: LeagueConfig, seasons=DEFAULT_SEASONS) -> dict[str, list[dict]]:
     """`"<norm_name>|<POS>" -> [season lines]`, most recent last."""
     births = birth_years()
@@ -101,12 +117,14 @@ def build(cfg: LeagueConfig, seasons=DEFAULT_SEASONS) -> dict[str, list[dict]]:
     out: dict[str, list[dict]] = {}
     for season in seasons:
         try:
-            tot = season_totals(nflverse.weekly_stats(season), cfg.scoring)
+            weekly = nflverse.weekly_stats(season)
+            tot = season_totals(weekly, cfg.scoring)
         except Exception as exc:  # noqa: BLE001 - a missing season is not fatal
             log.warning("production history: season %s unavailable (%s)", season, exc)
             continue
 
         predicted = _predicted_ranks(season, cfg.adp_format, cfg.teams)
+        team_of = _season_teams(weekly)
         tot = tot.copy()
         tot["pos"] = tot["position"].map(norm_position)
         for pos in RANKED_POSITIONS:
@@ -123,6 +141,7 @@ def build(cfg: LeagueConfig, seasons=DEFAULT_SEASONS) -> dict[str, list[dict]]:
                         predicted_rank=predicted.get(key),
                         age=(season - by) if by else None,
                         rookie=(rookies.get(name) == season),
+                        team=norm_team(team_of.get(row.player_id)) or None,
                     ).as_dict()
                 )
     for lines in out.values():

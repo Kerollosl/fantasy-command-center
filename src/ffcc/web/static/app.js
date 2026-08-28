@@ -83,7 +83,7 @@ function rankSpark(seasons, pos, w = 260, h = 68) {
     return `
     <circle class="sparkhit" cx="${cx}" cy="${cy}" r="9" fill="transparent"
       data-season="${s.season}" data-rank="${s.rank}" data-pred="${s.predicted_rank ?? ""}"
-      data-points="${s.points}" data-games="${s.games}" data-age="${s.age ?? ""}"
+      data-points="${s.points}" data-games="${s.games}" data-age="${s.age ?? ""}" data-team="${s.team ?? ""}"
       data-rookie="${s.rookie ? "1" : ""}" data-pos="${pos}" tabindex="0"
       aria-label="${s.season}${s.rookie ? " (rookie season)" : ""}: ${pos}${s.rank}, ${s.points} points in ${s.games} games"></circle>
     ${rookieRing}
@@ -132,8 +132,10 @@ function sparkTipContent(d) {
         word === "matched" ? "Right on schedule" : `${word} it by ${Math.abs(delta)}`}</b></div>`;
   }
   const rookieBadge = d.dataset.rookie ? `<span class="rookiebadge">Rookie</span>` : "";
+  const teamBadge = d.dataset.team
+    ? `<img class="stiplogo" src="/logos/${esc(d.dataset.team)}.png" width="16" height="16" alt="${esc(d.dataset.team)}">` : "";
   return `
-    <div class="stiphead">${d.dataset.season} <span class="pos ${pos}">${pos}${rank}</span>${rookieBadge}</div>
+    <div class="stiphead">${teamBadge}${d.dataset.season} <span class="pos ${pos}">${pos}${rank}</span>${rookieBadge}</div>
     ${deltaLine}
     <div class="stiprow"><span>Points</span><b>${pts}</b></div>
     <div class="stiprow"><span>Games</span><b>${games}${missed ? " — missed significant time" : ""}</b></div>
@@ -256,8 +258,16 @@ async function openProfile(key) {
       : delta > 1 ? `<span class="up">beat by ${delta}</span>`
       : delta < -1 ? `<span class="down">missed by ${-delta}</span>`
       : "on schedule";
+    // Every current team's logo is cached at snapshot time (a draftable
+    // player exists on all 32), so any past season's abbreviation resolves
+    // to a real file -- no per-season lookup needed, just the filename
+    // convention the logo cache already uses everywhere else.
+    const teamLogo = s.team
+      ? `<img class="seasonlogo" src="/logos/${esc(s.team)}.png" width="18" height="18" alt="${esc(s.team)}" title="${esc(s.team)}">`
+      : "";
     return `
     <tr><td>${s.season}${s.rookie ? ' <span class="rookiebadge sm">R</span>' : ""}</td>
+      <td>${teamLogo}</td>
       <td><b class="rankpill" style="color:${TIER_COLOR[tier]}">${d.pos}${s.rank}</b></td>
       <td class="mut">${s.predicted_rank != null ? d.pos + s.predicted_rank : "—"}</td>
       <td class="mut">${deltaTxt}</td>
@@ -271,7 +281,12 @@ async function openProfile(key) {
     <div class="pf">
       <button class="pfclose" id="pfclose" aria-label="Close profile">×</button>
       <div class="pfhead">
-        ${avatar(d, 64)}
+        <div class="pfphoto">
+          ${avatar(d, 64)}
+          ${d.pos !== "DEF" && d.team_logo
+            ? `<img class="pflogo" src="/logos/${esc(d.team_logo)}" width="30" height="30" alt="${esc(d.team)}">`
+            : ""}
+        </div>
         <div>
           <div class="pfname">${esc(d.name)}</div>
           <div class="pfmeta"><span class="pos ${d.pos}">${d.pos}</span>
@@ -289,7 +304,7 @@ async function openProfile(key) {
       <h3>Positional finish by season</h3>
       ${rankSpark(d.seasons, d.pos)}
       ${d.seasons.length ? `<table class="pfseasons">
-        <thead><tr><th>Season</th><th>Finish</th><th title="That season's ADP-implied positional rank -- the market's preseason prediction, not preseason-game stats">ADP</th><th>Vs. ADP</th>
+        <thead><tr><th>Season</th><th>Team</th><th>Finish</th><th title="That season's ADP-implied positional rank -- the market's preseason prediction, not preseason-game stats">ADP</th><th>Vs. ADP</th>
           <th class="num">Points</th><th class="num">Games</th>
           <th class="num">Per&nbsp;game</th><th class="num">Age</th></tr></thead>
         <tbody>${rows}</tbody></table>

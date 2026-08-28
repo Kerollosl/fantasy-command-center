@@ -3,7 +3,7 @@ name: "Main League"
 teams: 12
 rounds: 15
 draft_type: snake
-my_draft_slot: 1        # 1-indexed. Change to your real slot before the draft.
+my_draft_slot: 1  # 1-indexed. Set this from the picker in the header.
 
 # Starting lineup. Drives replacement level for VOR.
 roster:

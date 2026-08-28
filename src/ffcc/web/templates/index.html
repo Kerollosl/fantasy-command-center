@@ -9,6 +9,10 @@
 <body>
   <header class="top">
     <div class="brand">Fantasy Command Center<em id="league"></em></div>
+    <label class="slotpick">
+      <select id="slot" aria-label="Which draft slot are you?"></select>
+      <span>Your slot</span>
+    </label>
     <div class="stat"><b id="pickno" class="tnum">—</b><span>Pick</span></div>
     <div class="stat"><b id="rnd" class="tnum">—</b><span>Round</span></div>
     <div class="stat"><b id="clock">—</b><span>On the clock</span></div>
@@ -60,7 +64,8 @@
 
     <div class="col">
       <section>
-        <h2>My roster</h2>
+        <h2>My roster <span class="tag" id="mypicks"></span></h2>
+        <div class="shapewrap" id="shape"></div>
         <div id="roster"></div>
       </section>
       <section>
@@ -79,7 +84,8 @@
     </div>
   </main>
 
-  <div class="gridview col" id="gridview" hidden>
+  <div class="gridview" id="gridview" hidden>
+    <div class="gridlegend" id="gridlegend"></div>
     <table class="dg" id="dg"></table>
   </div>
 

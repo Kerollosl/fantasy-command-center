@@ -4,7 +4,10 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
-from .config import LeagueConfig, load_league
+import dataclasses
+import re
+
+from .config import CONFIG_DIR, LeagueConfig, load_league
 from .draft.state import DraftState
 from .identity.resolver import ResolutionReport, build_players
 from .projections.blend import attach_projections
@@ -57,6 +60,40 @@ class Board:
 
         scored.sort(key=lambda t: (t[0], t[1]))
         return [p for _, _, p in scored[:limit]]
+
+
+def set_draft_slot(board: "Board", slot: int, persist: bool = True) -> None:
+    """Change which draft slot is mine, mid-draft if need be.
+
+    Picks already recorded keep their own team_slot, so history is untouched --
+    only the question of which column is *yours* changes, and every survival
+    horizon, recommendation, and grade re-derives from it.
+    """
+    slot = max(1, min(int(slot), board.cfg.teams))
+    board.cfg = dataclasses.replace(board.cfg, my_draft_slot=slot)
+    board.state.cfg = board.cfg
+
+    if not persist:
+        return
+    # Write it back so the setting survives a restart -- forgetting to set this
+    # before a draft silently invalidates every number on the board.
+    path = CONFIG_DIR / "league.yaml"
+    try:
+        # Rewrite just this one line. A safe_dump round-trip would silently strip
+        # every comment out of the user's config file.
+        text = path.read_text()
+        lines = text.splitlines(keepends=True)
+        for i, line in enumerate(lines):
+            if re.match(r"^\s*my_draft_slot\s*:", line):
+                head, _, tail = line.partition(":")
+                comment = ""
+                if "#" in tail:
+                    comment = "  " + tail[tail.index("#"):].rstrip("\n")
+                lines[i] = f"{head}: {slot}{comment}\n"
+                path.write_text("".join(lines))
+                return
+    except Exception:  # noqa: BLE001 - a read-only config must not break the draft
+        pass
 
 
 def build_board(cfg: LeagueConfig | None = None, season: int = 2026) -> Board:

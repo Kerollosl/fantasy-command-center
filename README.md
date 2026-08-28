@@ -76,6 +76,13 @@ so a network problem mid-draft degrades to stale data rather than a dead tool.
 ffcc board --pos RB --limit 30     # print the board to a terminal
 ```
 
+## Picking your draft slot
+
+Set it from the picker in the header — no config editing, and it can be changed
+mid-draft. Everything re-derives from it: which picks are yours, every survival
+probability, the recommendation horizon, and the grades. Your choice is written
+back to `config/league.yaml` so it survives a restart.
+
 ## Reading the board
 
 **Tier ladder.** One lane per skill position. Blocks are the players still
@@ -94,8 +101,13 @@ pick in a back-to-back turn.
 **Draft pace.** How fast each position is leaving relative to market ADP, with
 1.00× as the centre line. Above it, that position is running hot.
 
-**Draft grid.** Every pick as rounds × teams with your column highlighted — the
-quickest way to see a positional run forming.
+**Roster shape donuts.** Positional make-up of each roster — the one question
+on this board that is genuinely part-to-whole rather than "how much". Survival
+stays a meter and value stays a bar for exactly that reason.
+
+**Draft grid.** Every pick as rounds × teams, cells filled by position with
+round.pick labels and snake-direction arrows, your column outlined. The fastest
+way to see a positional run forming.
 
 ## Using it live
 

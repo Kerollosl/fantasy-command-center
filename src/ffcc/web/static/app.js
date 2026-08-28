@@ -16,6 +16,35 @@ const signed = (v) => (v > 0 ? "+" : v < 0 ? "\u2212" : "") + Math.abs(v);
 const SEQ = ["--seq-1", "--seq-2", "--seq-3", "--seq-4", "--seq-5"];
 const seqFor = (t) => `var(${SEQ[Math.min(SEQ.length - 1, Math.max(0, Math.floor(t * SEQ.length)))]})`;
 
+// Donut: part-to-whole at a glance, <=6 segments. Used only for roster shape --
+// the one question here that is genuinely "what is this made of" rather than
+// "how much". Survival stays a meter and value stays a bar, because a single
+// ratio and a magnitude are not part-to-whole questions.
+function donut(segments, size = 26, thickness = 5) {
+  const total = segments.reduce((a, s) => a + s.n, 0);
+  if (!total) {
+    return `<svg class="donut" width="${size}" height="${size}" viewBox="0 0 40 40" aria-hidden="true">
+      <circle cx="20" cy="20" r="15.5" fill="none" stroke="var(--s3)" stroke-width="${thickness}"/></svg>`;
+  }
+  const R = 15.5, C = 2 * Math.PI * R;
+  const gap = segments.length > 1 ? 1.6 : 0;   // surface gap between fills
+  let offset = 0;
+  const arcs = segments.map((seg) => {
+    const len = (seg.n / total) * C;
+    const dash = `${Math.max(len - gap, 0.6)} ${C - Math.max(len - gap, 0.6)}`;
+    const el = `<circle cx="20" cy="20" r="${R}" fill="none"
+      stroke="var(--${seg.pos.toLowerCase()})" stroke-width="${thickness}"
+      stroke-dasharray="${dash}" stroke-dashoffset="${-offset}"/>`;
+    offset += len;
+    return el;
+  }).join("");
+  const label = segments.map((s) => `${s.n} ${s.pos}`).join(", ");
+  return `<svg class="donut" width="${size}" height="${size}" viewBox="0 0 40 40" role="img"
+     aria-label="Roster shape: ${esc(label)}"><title>${esc(label)}</title>
+     <circle cx="20" cy="20" r="${R}" fill="none" stroke="var(--s3)" stroke-width="${thickness}"/>
+     ${arcs}</svg>`;
+}
+
 async function api(path, opts) {
   const r = await fetch(path, opts);
   if (!r.ok) throw new Error(r.statusText);
@@ -72,6 +101,14 @@ $("q").addEventListener("keydown", (e) => {
   else if (e.key === "Escape") { $("q").value = ""; results = []; drawDrop(); }
 });
 $("undo").onclick = async () => { await api("/api/undo", { method: "POST" }); refresh(); };
+$("slot").onchange = async (e) => {
+  const r = await api("/api/slot", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ slot: Number(e.target.value) }),
+  });
+  if (!r.ok) { $("status").textContent = r.error; return; }
+  refresh();
+};
 $("reset").onclick = async () => {
   if (confirm("Clear every pick and restart the draft?")) {
     await api("/api/reset", { method: "POST" }); refresh();
@@ -95,6 +132,17 @@ document.addEventListener("keydown", (e) => {
 function render() {
   if (!S) return;
   $("league").textContent = "· " + S.league;
+
+  const sel = $("slot");
+  if (sel.options.length !== S.teams) {
+    sel.innerHTML = Array.from({ length: S.teams }, (_, i) =>
+      `<option value="${i + 1}">Pick ${i + 1}</option>`).join("");
+  }
+  sel.value = String(S.my_slot);
+  const mp = S.my_picks || [];
+  $("mypicks").textContent = mp.length
+    ? mp.slice(0, 6).join(", ") + (mp.length > 6 ? "…" : "")
+    : "";
   $("pickno").textContent = `${S.current_pick}/${S.total_picks}`;
   $("rnd").textContent = S.round;
   $("clock").textContent = S.complete ? "Done" : `Team ${S.on_clock}`;
@@ -207,10 +255,10 @@ function renderBoard() {
       ? `<span class="flag ${p.injury === "Questionable" ? "q" : ""}">${esc(p.injury.slice(0, 4))}</span>` : "";
     return `<tr class="${cliff ? "cliff" : ""}" data-key="${esc(p.key)}">
       <td><span class="pname">${esc(p.name)}${flag}</span></td>
-      <td><span class="pos ${p.pos}">${p.pos}</span></td>
+      <td><span class="posdot ${p.pos}">${p.pos}</span></td>
       <td class="mut">${esc(p.team)}</td>
       <td class="num mut">${p.tier}</td>
-      <td class="vbar"><i style="width:${w}%"></i><b>${p.vor}</b></td>
+      <td class="vbar"><i style="width:${w}%;background:var(--${p.pos.toLowerCase()})"></i><b>${p.vor}</b></td>
       <td class="num mut">${p.proj}</td>
       <td class="num mut">${p.adp ?? "—"}</td>
       <td class="num mut">${p.bye ?? "—"}</td>
@@ -224,6 +272,10 @@ function renderBoard() {
 
 function renderRoster() {
   const me = S.grades.find((g) => g.is_me);
+  $("shape").innerHTML = me && me.roster.length
+    ? `${donut(me.shape, 46, 7)}<div class="shapekey">${me.shape.map((s2) =>
+        `<span><i style="background:var(--${s2.pos.toLowerCase()})"></i>${s2.n} ${s2.pos}</span>`).join("")}</div>`
+    : "";
   $("roster").innerHTML = me && me.roster.length
     ? me.roster.map((p) => `<div class="slot"><span class="n">${p.overall}</span>
         <span class="pos ${p.pos}">${p.pos}</span><span>${esc(p.name)}</span></div>`).join("")
@@ -278,7 +330,7 @@ function renderGrades() {
   const span = hi - lo || 1;
   $("grades").innerHTML = sorted.map((g) => `
     <div class="gr ${g.is_me ? "me" : ""}">
-      <div class="g1"><span class="lt">${g.letter}</span>
+      <div class="g1">${donut(g.shape || [], 24, 5)}<span class="lt">${g.letter}</span>
         <span class="tm">Team ${g.slot}${g.is_me ? " · you" : ""}</span>
         <span class="sp">${g.roster.length} pick${g.roster.length === 1 ? "" : "s"} · ${g.slp} pts</span></div>
       <div class="gbar"><i style="width:${Math.max(3, ((g.score - lo) / span) * 100)}%"></i></div>
@@ -288,13 +340,34 @@ function renderGrades() {
 }
 
 function renderGrid() {
+  const POSN = ["QB", "RB", "WR", "TE", "DEF", "K"];
+  $("gridlegend").innerHTML = POSN.map((p) =>
+    `<span><i style="background:var(--${p.toLowerCase()}-fill);box-shadow:inset 0 0 0 1px var(--${p.toLowerCase()})"></i>${p}</span>`
+  ).join("") + `<span><i style="box-shadow:inset 0 0 0 1.5px rgba(74,192,108,.55)"></i>Your picks</span>`;
+
   const head = `<thead><tr><th></th>${Array.from({ length: S.teams }, (_, i) =>
-    `<th>T${i + 1}${i + 1 === S.my_slot ? " ★" : ""}</th>`).join("")}</tr></thead>`;
-  const body = S.grid.map((row, ri) => `<tr><th>R${ri + 1}</th>${row.map((c) => `
-    <td><div class="cell ${c.mine ? "mine" : ""} ${c.name ? "" : "empty"}">
-      ${c.name ? `<span class="cp" style="color:var(--${c.pos.toLowerCase()}-t,var(--fg-3))">${c.pos}</span>
-        <span class="cn">${esc(c.name)}</span>` : `<span class="cn mut">${c.overall}</span>`}
-    </div></td>`).join("")}</tr>`).join("");
+    `<th class="${i + 1 === S.my_slot ? "mine" : ""}">${i + 1 === S.my_slot ? "You" : "T" + (i + 1)}</th>`
+  ).join("")}</tr></thead>`;
+
+  const body = S.grid.map((row, ri) => {
+    // Snake direction, so the order picks actually fall in is visible.
+    const arrow = ri % 2 === 0 ? "\u2192" : "\u2190";
+    const cells = row.map((c) => {
+      const mine = c.mine ? " mycol" : "";
+      if (c.name) {
+        return `<td class="${mine.trim()}"><span class="cell filled ${c.pos}">
+          <span class="cp">${c.pos}</span><span class="cn">${esc(c.name)}</span></span></td>`;
+      }
+      const now = c.overall === S.current_pick;
+      // Round.pick reads the way drafters actually talk about picks.
+      const label = `${ri + 1}.${String(((c.overall - 1) % S.teams) + 1).padStart(2, "0")}`;
+      return `<td class="${mine.trim()}"><span class="cell empty ${now ? "now" : ""}">
+        <span class="pk">${now ? "On the clock" : label}</span>
+        ${now ? "" : `<span class="ar">${arrow}</span>`}</span></td>`;
+    }).join("");
+    return `<tr><th>R${ri + 1}</th>${cells}</tr>`;
+  }).join("");
+
   $("dg").innerHTML = head + `<tbody>${body}</tbody>`;
 }
 

@@ -23,6 +23,16 @@
   /* sequential: magnitude (survival, value) — one hue, light→dark */
   --seq-1:#003846; --seq-2:#005968; --seq-3:#107c8b; --seq-4:#44a1b1; --seq-5:#6cc7d7;
 
+  /* draft-grid cells: darkened position fills paired with a light ink of the
+     same hue. A single ink across all six only works at this lightness -- on
+     fully saturated fills, WR and DEF need white while the rest need dark. */
+  --rb-fill:#0a3810; --rb-ink:#b0e0b0;
+  --wr-fill:#102d56; --wr-ink:#b0d3ff;
+  --qb-fill:#491b32; --qb-ink:#fabdd6;
+  --te-fill:#442600; --te-ink:#efca99;
+  --def-fill:#352250; --def-ink:#d9c5ff;
+  --k-fill:#00363a;  --k-ink:#a2dee1;
+
   /* status: reserved, never a data series */
   --good:#4ac06c; --warning:#ed9e2f; --critical:#f3625d;
 
@@ -94,6 +104,39 @@ h2{font-size:9.5px;text-transform:uppercase;letter-spacing:.9px;color:var(--fg-4
 h2 .tag{color:var(--fg-3);letter-spacing:0;text-transform:none;font-weight:500;font-size:10.5px}
 h2 .tag b{color:var(--good);font-weight:700;font-size:12px;margin-right:5px}
 section + section{margin-top:20px}
+
+/* ─── slot picker ────────────────────────────────────────────── */
+.slotpick{display:flex;flex-direction:column;gap:3px;white-space:nowrap}
+.slotpick select{appearance:none;-webkit-appearance:none;
+  background-color:var(--s2);color:var(--fg);
+  border:1px solid var(--line);border-radius:var(--r);
+  padding:5px 24px 5px 9px;font-size:13px;font-weight:620;cursor:pointer;
+  background-image:linear-gradient(45deg,transparent 50%,var(--fg-3) 50%),
+    linear-gradient(135deg,var(--fg-3) 50%,transparent 50%);
+  background-position:calc(100% - 13px) 53%,calc(100% - 9px) 53%;
+  background-size:4px 4px,4px 4px;background-repeat:no-repeat}
+.slotpick select:hover{border-color:var(--fg-4)}
+.slotpick select option{background:var(--s2);color:var(--fg)}
+.slotpick > span{color:var(--fg-4);font-size:9.5px;text-transform:uppercase;
+  letter-spacing:.7px;font-weight:600}
+
+/* ─── roster shape donut ─────────────────────────────────────── */
+.donut{flex:none;display:block}
+.shapewrap{display:flex;align-items:center;gap:12px;margin-bottom:9px;padding:9px 10px;
+  background:var(--s1);border:1px solid var(--line-soft);border-radius:var(--r)}
+.shapewrap:empty{display:none}
+.shapekey{display:flex;flex-wrap:wrap;gap:3px 11px;font-size:10.5px;color:var(--fg-3)}
+.shapekey span{display:inline-flex;align-items:center;gap:5px;white-space:nowrap}
+.shapekey i{width:7px;height:7px;border-radius:2px;flex:none}
+.gr .donut{margin-right:1px}
+
+/* ─── position marker: colour leads, letters keep it readable ── */
+.posdot{display:inline-flex;align-items:center;gap:5px;font-size:10.5px;
+  font-weight:620;letter-spacing:.2px;color:var(--fg-2)}
+.posdot::before{content:"";width:8px;height:8px;border-radius:2px;flex:none;background:var(--fg-4)}
+.posdot.RB::before{background:var(--rb)} .posdot.WR::before{background:var(--wr)}
+.posdot.QB::before{background:var(--qb)} .posdot.TE::before{background:var(--te)}
+.posdot.DEF::before{background:var(--def)} .posdot.K::before{background:var(--k)}
 
 /* ─── position identity ──────────────────────────────────────── */
 .pos{display:inline-flex;align-items:center;justify-content:center;min-width:31px;
@@ -174,7 +217,7 @@ tbody tr.cliff td{border-bottom:1px solid var(--warning)}
 /* inline magnitude bar: VOR as length, not just a number */
 .vbar{position:relative;min-width:74px}
 .vbar i{position:absolute;left:0;top:50%;transform:translateY(-50%);height:14px;
-  background:var(--seq-3);border-radius:2px;opacity:.5}
+  border-radius:2px;opacity:.42}
 .vbar b{position:relative;font-weight:600;padding-left:5px}
 
 /* survival meter: sequential ramp, magnitude not status */
@@ -196,7 +239,7 @@ tbody tr.cliff td{border-bottom:1px solid var(--warning)}
 .gr{padding:8px 10px;border-radius:var(--r);background:var(--s1);
   border:1px solid var(--line-soft);margin-bottom:5px}
 .gr.me{border-color:rgba(74,192,108,.45);background:rgba(74,192,108,.07)}
-.gr .g1{display:flex;align-items:center;gap:9px}
+.gr .g1{display:flex;align-items:center;gap:8px}
 .gr .lt{font-size:15px;font-weight:700;min-width:26px;letter-spacing:-.4px}
 .gr .tm{font-size:11.5px;font-weight:600;color:var(--fg-2)}
 .gr .sp{margin-left:auto;font-size:10.5px;color:var(--fg-4);font-variant-numeric:tabular-nums}
@@ -227,17 +270,39 @@ tbody tr.cliff td{border-bottom:1px solid var(--warning)}
 .chip.ok{background:rgba(74,192,108,.14);color:var(--good)}
 
 /* ─── draft grid ─────────────────────────────────────────────── */
-.gridview{overflow:auto;height:calc(100vh - 100px);border-right:none}
-.dg{border-collapse:separate;border-spacing:2px;font-size:10px}
-.dg th{position:sticky;top:0;background:var(--bg);font-size:9px;padding:3px;text-align:center}
+.gridview{overflow:auto;height:calc(100vh - 100px);border-right:none;padding:13px}
+.dg{border-collapse:separate;border-spacing:3px;font-size:10px;width:100%}
+.dg thead th{position:sticky;top:0;z-index:6;background:var(--bg);font-size:10px;
+  padding:5px 4px;text-align:center;color:var(--fg-3);font-weight:620;border:none}
+.dg thead th.mine{color:var(--good)}
+.dg tbody th{position:sticky;left:0;z-index:4;background:var(--bg);font-size:9.5px;
+  color:var(--fg-4);font-weight:620;padding:0 7px 0 0;text-align:right;border:none}
 .dg td{padding:0;border:none;white-space:normal}
-.cell{padding:4px 5px;border-radius:4px;background:var(--s1);min-height:30px;
-  border:1px solid var(--line-soft);line-height:1.25}
-.cell.mine{border-color:rgba(74,192,108,.5);background:rgba(74,192,108,.08)}
-.cell.empty{background:transparent;border-style:dashed;border-color:var(--line-soft)}
+
+.cell{display:block;padding:5px 6px;border-radius:5px;min-height:34px;
+  background:var(--s1);border:1px solid var(--line-soft);line-height:1.2}
+.cell.filled{border-color:transparent}
+.cell.RB{background:var(--rb-fill);color:var(--rb-ink)}
+.cell.WR{background:var(--wr-fill);color:var(--wr-ink)}
+.cell.QB{background:var(--qb-fill);color:var(--qb-ink)}
+.cell.TE{background:var(--te-fill);color:var(--te-ink)}
+.cell.DEF{background:var(--def-fill);color:var(--def-ink)}
+.cell.K{background:var(--k-fill);color:var(--k-ink)}
+.cell .cp{display:block;font-size:8.5px;font-weight:720;letter-spacing:.4px;opacity:.75}
 .cell .cn{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
-  color:var(--fg-2);font-size:10px}
-.cell .cp{font-size:8.5px;font-weight:700;letter-spacing:.3px}
+  font-size:10.5px;font-weight:560;margin-top:1px}
+/* Your column stays findable against 180 coloured cells. */
+.dg td.mycol .cell{box-shadow:inset 0 0 0 1.5px rgba(74,192,108,.55)}
+.cell.empty{background:transparent;border-style:dashed;color:var(--fg-4);
+  display:flex;align-items:center;justify-content:space-between;gap:4px}
+.cell.empty .pk{font-variant-numeric:tabular-nums}
+.cell.empty .ar{opacity:.5}
+.cell.now{background:var(--accent-soft);border:1px solid var(--accent);color:var(--accent);
+  font-weight:680}
+.gridlegend{display:flex;flex-wrap:wrap;gap:5px 14px;margin-bottom:11px;font-size:11px;
+  color:var(--fg-3);align-items:center}
+.gridlegend span{display:inline-flex;align-items:center;gap:6px}
+.gridlegend i{width:11px;height:11px;border-radius:3px;flex:none}
 
 /* ─── misc ───────────────────────────────────────────────────── */
 .empty-state{color:var(--fg-4);font-size:11.5px;padding:16px 10px;text-align:center;
@@ -257,6 +322,7 @@ tbody tr.cliff td{border-bottom:1px solid var(--warning)}
    into an unreadable sliver. A squeezed table is worse than a scroll. */
 @media (max-width:1139px){
   .ladder{grid-template-columns:1fr}
+  .slotpick{order:-1}
   .cmd{flex-wrap:wrap}
   .cmd .hint{display:none}
   #q{flex:1 1 100%;order:-1}

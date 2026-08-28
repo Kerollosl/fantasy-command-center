@@ -1,3 +1,5 @@
+import dataclasses
+
 from ffcc.config import load_league
 
 
@@ -10,7 +12,8 @@ def test_snake_order_reverses_each_round():
 
 
 def test_my_picks_match_slot():
-    cfg = load_league()
+    # Pinned: the UI can rewrite my_draft_slot in league.yaml at runtime.
+    cfg = dataclasses.replace(load_league(), my_draft_slot=1)
     picks = cfg.my_pick_numbers()
     assert len(picks) == cfg.rounds
     order = cfg.snake_order()

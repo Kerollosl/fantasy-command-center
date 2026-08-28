@@ -12,7 +12,7 @@ from ..draft.grade import grade_all
 from ..draft.needs import starter_gaps
 from ..draft.recommend import _decision_horizon, recommend
 from ..draft.survival import positional_hazards, survival_prob
-from ..engine import build_board
+from ..engine import build_board, set_draft_slot
 
 HERE = Path(__file__).parent
 app = FastAPI(title="Fantasy Command Center")
@@ -73,6 +73,20 @@ def _scarcity(state, players, cfg, hazards, my_next):
             "hazard": round(hazards.get(pos, 1.0), 2),
         }
     return out
+
+
+def _composition(picks) -> list[dict]:
+    """Positional make-up of a roster, ordered so the donut is stable.
+
+    Part-to-whole with at most six segments -- the one place on this board where
+    a donut beats a number, because the question is "what shape is this roster"
+    rather than "how many of each".
+    """
+    order = ("QB", "RB", "WR", "TE", "DEF", "K")
+    counts: dict[str, int] = {}
+    for p in picks:
+        counts[p.position] = counts.get(p.position, 0) + 1
+    return [{"pos": p, "n": counts[p]} for p in order if counts.get(p)]
 
 
 def _grid(state, cfg):
@@ -143,6 +157,7 @@ def snapshot():
                 {"name": pk.player_name, "pos": pk.position, "overall": pk.overall}
                 for pk in st.roster(g.slot)
             ],
+            "shape": _composition(st.roster(g.slot)),
         }
         for g in grade_all(st, b.players, cfg)
     ]
@@ -154,6 +169,7 @@ def snapshot():
         "teams": cfg.teams,
         "rounds": cfg.rounds,
         "my_slot": cfg.my_draft_slot,
+        "my_picks": cfg.my_pick_numbers(),
         "current_pick": st.current_pick,
         "total_picks": cfg.total_picks,
         "on_clock": st.slot_on_clock(),
@@ -212,6 +228,19 @@ def make_pick(payload: dict):
         return {"ok": False, "error": str(e)}
     return {"ok": True, "pick": {"overall": pick.overall, "slot": pick.team_slot,
                                  "name": pick.player_name}}
+
+
+@app.post("/api/slot")
+def choose_slot(payload: dict):
+    b = board()
+    try:
+        slot = int(payload.get("slot"))
+    except (TypeError, ValueError):
+        return {"ok": False, "error": "slot must be a number"}
+    if not 1 <= slot <= b.cfg.teams:
+        return {"ok": False, "error": f"slot must be between 1 and {b.cfg.teams}"}
+    set_draft_slot(b, slot)
+    return {"ok": True, "slot": slot, "my_picks": b.cfg.my_pick_numbers()}
 
 
 @app.post("/api/undo")

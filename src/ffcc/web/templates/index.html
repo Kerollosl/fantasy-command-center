@@ -27,9 +27,12 @@
     <span class="hint"><kbd>/</kbd> search <kbd>↑↓</kbd> move <kbd>⏎</kbd> draft</span>
     <button class="btn" id="undo">Undo</button>
     <button class="btn" id="gridbtn" aria-pressed="false">Draft grid</button>
+    <button class="btn" id="recapbtn">Recap</button>
     <button class="btn" id="reset">Reset</button>
     <div id="drop" hidden role="listbox" aria-label="Player matches"></div>
   </div>
+
+  <div class="ticker" id="ticker" aria-label="Recent picks" hidden></div>
 
   <main class="wrap" id="mainview">
     <div class="col">
@@ -58,14 +61,12 @@
               <th scope="col" data-key="pos">Pos</th>
               <th scope="col" data-key="team">Team</th>
               <th scope="col" class="num" data-key="predicted_rank" title="Predicted rank this season, by current ADP -- overall when every position is shown together, positional when filtered to one">Predicted</th>
-              <th scope="col" class="num" data-key="last_year_rank" title="Actual finish rank last season -- overall when every position is shown together, positional when filtered to one">Last&nbsp;Yr</th>
-              <th scope="col" class="num" data-key="age">Age</th>
               <th scope="col" class="num" data-key="tier">Tier</th>
-              <th scope="col" data-key="vor" title="Projected points above a freely available starter at this position">Points above replacement</th>
-              <th scope="col" class="num" data-key="proj">Proj</th>
-              <th scope="col" class="num" data-key="adp">ADP</th>
-              <th scope="col" class="num" data-key="bye">Bye</th>
+              <th scope="col" data-key="vor" title="Projected points above a freely available starter at this position">Value (VOR)</th>
               <th scope="col" class="num" data-key="survival" title="Chance he is still on the board at your next real decision point">Still there?</th>
+              <th scope="col" class="num" data-key="adp">ADP</th>
+              <th scope="col" class="num" data-key="proj">Proj</th>
+              <th scope="col" class="num" data-key="bye">Bye</th>
             </tr></thead>
             <tbody id="board"></tbody>
           </table>
@@ -105,6 +106,8 @@
   <footer class="foot">
     <span id="resolution"></span><span id="status" role="status"></span>
   </footer>
+
+  <div class="toasts" id="toasts" aria-live="polite"></div>
 <script src="/static/app.js"></script>
 </body>
 </html>

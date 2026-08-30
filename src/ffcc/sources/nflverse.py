@@ -63,3 +63,52 @@ def depth_charts(season: int, ttl: float = 12 * 3600) -> pd.DataFrame | None:
         return pd.read_csv(io.BytesIO(raw), low_memory=False)
     except Exception:
         return None
+
+
+def schedules(ttl: float = 24 * 3600) -> pd.DataFrame:
+    """Every season's slate in one file; filter by season/game_type at the call site.
+
+    The NFL releases next season's dates months before kickoff, so a preseason
+    draft can already read the real opponent list -- not a placeholder.
+    """
+    raw = fetch(f"{REL}/schedules/games.csv", key="nflverse_games.csv", ttl=ttl)
+    return pd.read_csv(io.BytesIO(raw), low_memory=False)
+
+
+def snap_counts(season: int, ttl: float = 24 * 3600) -> pd.DataFrame:
+    """Per-player, per-game snap share. Only finished seasons exist."""
+    raw = fetch(
+        f"{REL}/snap_counts/snap_counts_{season}.csv",
+        key=f"nflverse_snaps_{season}.csv", ttl=ttl,
+    )
+    return pd.read_csv(io.BytesIO(raw), low_memory=False)
+
+
+def rosters(season: int, ttl: float = 24 * 3600) -> pd.DataFrame:
+    """Full roster snapshot, including the current (in-progress) season."""
+    raw = fetch(
+        f"{REL}/rosters/roster_{season}.csv",
+        key=f"nflverse_roster_{season}.csv", ttl=ttl,
+    )
+    return pd.read_csv(io.BytesIO(raw), low_memory=False)
+
+
+PBP_COLUMNS = (
+    "season_type", "posteam", "play_type", "sack", "qb_hit",
+    "tackled_for_loss", "rush_attempt", "rushing_yards", "pass_attempt",
+    "yardline_100", "rusher_player_id", "receiver_player_id",
+)
+
+
+def pbp(season: int, ttl: float = 7 * 24 * 3600) -> pd.DataFrame:
+    """Play-by-play for one completed season, trimmed to the O-line columns we score.
+
+    Full file is ~100+ columns; a finished season never changes, so this is
+    cached hard (7 days) rather than the 24h default the rest of the module uses.
+    """
+    raw = fetch(
+        f"{REL}/pbp/play_by_play_{season}.csv.gz",
+        key=f"nflverse_pbp_{season}.csv.gz", ttl=ttl,
+    )
+    return pd.read_csv(io.BytesIO(raw), compression="gzip",
+                       usecols=list(PBP_COLUMNS), low_memory=False)

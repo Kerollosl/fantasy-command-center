@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 
 from ffcc.config import load_league
-from ffcc.draft.montecarlo import simulate, value_share
+from ffcc.draft.montecarlo import _reach_index, _wants, simulate, value_share
 from ffcc.draft.state import DraftState
 
 
@@ -111,3 +111,39 @@ def test_hazards_shift_the_simulated_probability():
     # are known to be flying off the board faster than their ADP suggests.
     rb = next(c for c in candidates if c.position == "RB")
     assert hot[rb.key] != base[rb.key]
+
+
+def test_wants_hard_caps_a_full_position():
+    cfg = load_league()
+    cap = cfg.roster.get("RB", 1) + 2   # RB is flex-eligible, so cap includes flex slots
+    assert not _wants(cfg, {"RB": cap}, "RB")
+    assert _wants(cfg, {"RB": cap - 1}, "RB")
+
+
+def test_reach_index_prefers_a_position_with_an_unfilled_starter_gap():
+    """A simulated opponent should reach a little for a real roster hole
+    within the perceived-value window, not draft purely best-available --
+    this is what makes opponents in the sim behave like real drafters."""
+    cfg = load_league()
+    pool = [
+        P(key="rb|RB", name="RB Guy", position="RB", proj_points=200, vor=100, adp=1),
+        P(key="wr|WR", name="WR Guy", position="WR", proj_points=190, vor=95, adp=2),
+        P(key="qb|QB", name="QB Guy", position="QB", proj_points=180, vor=90, adp=3),
+    ]
+    board_order = np.array([0, 1, 2])
+    taken = np.zeros(len(pool), dtype=bool)
+    counts = {"RB": 2, "WR": 2}   # both starter slots already filled; QB still needed
+    bi = _reach_index(cfg, counts, pool, board_order, taken)
+    assert pool[bi].position == "QB"
+
+
+def test_reach_index_falls_back_to_best_available_with_no_gap_in_window():
+    cfg = load_league()
+    pool = [
+        P(key="rb|RB", name="RB Guy", position="RB", proj_points=200, vor=100, adp=1),
+        P(key="wr|WR", name="WR Guy", position="WR", proj_points=190, vor=95, adp=2),
+    ]
+    board_order = np.array([0, 1])
+    taken = np.zeros(len(pool), dtype=bool)
+    bi = _reach_index(cfg, {}, pool, board_order, taken)
+    assert pool[bi].position == "RB"

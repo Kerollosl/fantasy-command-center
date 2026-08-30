@@ -2,17 +2,20 @@
 from __future__ import annotations
 
 import json
+import zlib
 from pathlib import Path
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
-from ..draft.grade import grade_all
+from ..draft.grade import grade_all, pick_values
+from ..draft.lineup import optimal_lineup
 from ..draft.needs import starter_gaps
 from ..draft.recommend import _decision_horizon, recommend
 from ..draft.survival import positional_hazards, survival_prob
 from ..config import DATA_DIR
+from ..draft import journal
 from ..draft.montecarlo import simulate, value_share
 from ..engine import build_board, set_draft_slot
 from ..history.rounds import insight as round_insight
@@ -30,10 +33,26 @@ app.mount("/logos", StaticFiles(directory=_logos), name="logos")
 BOARD = None
 
 
+def _sim_seed(state, cfg) -> int:
+    """A stable seed for the pick simulation, keyed to the board state.
+
+    Same picks entered, same slot, same pick number -> same seed -> identical
+    simulated probabilities on every refresh. The numbers only move when the
+    draft actually moves, so the headline recommendation stops flickering
+    between two close candidates while you are deciding.
+    """
+    picks = "|".join(p.player_key for p in state.picks)
+    return zlib.crc32(f"{cfg.my_draft_slot}:{state.current_pick}:{picks}".encode())
+
+
 def board():
     global BOARD
     if BOARD is None:
         BOARD = build_board()
+        recovered = journal.load()
+        if recovered:
+            BOARD.state.picks = recovered
+            print(f"Recovered {len(recovered)} pick(s) from a prior session's journal.")
     return BOARD
 
 
@@ -154,7 +173,8 @@ def snapshot():
     shares = value_share(rec_objs)
     try:
         odds = {o.key: o for o in
-                simulate(st, b.players, cfg, [r.player for r in rec_objs], hazards=hazards)}
+                simulate(st, b.players, cfg, [r.player for r in rec_objs],
+                         hazards=hazards, seed=_sim_seed(st, cfg))}
     except Exception:  # noqa: BLE001 - the analytic score always stands on its own
         odds = {}
 
@@ -281,6 +301,42 @@ def get_state():
     return snapshot()
 
 
+@app.get("/api/recap")
+def recap():
+    """Draft summary: final grade, full roster, and which picks captured the
+    most (and least) value against where the market had them. Meaningful at
+    any point in the draft, but written for after the last pick.
+    """
+    b = board()
+    st, cfg = b.state, b.cfg
+    slot = cfg.my_draft_slot
+    by_key = b.by_key()
+
+    picks = pick_values(st, b.players, cfg, slot)
+    roster = [by_key[pk.player_key] for pk in st.roster(slot) if pk.player_key in by_key]
+    starter_pts, slot_map = optimal_lineup(roster, cfg)
+    starter_keys = {p.key for lst in slot_map.values() for p in lst}
+
+    grades = grade_all(st, b.players, cfg)
+    mine = next((g for g in grades if g.slot == slot), None)
+    league_rank = sorted(grades, key=lambda g: -g.score).index(mine) + 1 if mine else None
+
+    ranked = sorted(picks, key=lambda pk: -pk["value"])
+    return {
+        "ok": True,
+        "complete": st.is_complete,
+        "picks_made": len(st.picks),
+        "total_picks": cfg.total_picks,
+        "grade": ({"letter": mine.letter, "score": round(mine.score, 2), "notes": mine.notes,
+                   "league_rank": league_rank, "of": len(grades)} if mine else None),
+        "starter_points": starter_pts,
+        "roster": [{**pk, "starter": pk["key"] in starter_keys}
+                   for pk in sorted(picks, key=lambda pk: pk["overall"])],
+        "best_value": ranked[:3],
+        "biggest_reaches": list(reversed(ranked[-3:])) if len(ranked) > 3 else [],
+    }
+
+
 @app.get("/api/player/{key:path}")
 def player_profile(key: str):
     """Everything known about one player, for the profile panel."""
@@ -307,6 +363,15 @@ def player_profile(key: str):
         "history_weight": p.history_weight,
         "trajectory": p.trajectory, "adjustments": p.adjustments,
         "seasons": p.seasons,
+        "oline_rank": p.oline_rank, "oline_score": p.oline_score,
+        "oline_continuity": p.oline_continuity, "oline_departed": p.oline_departed,
+        "oline_returning": p.oline_returning, "oline_total": p.oline_total,
+        "sos_rank": p.sos_rank, "sos_score": p.sos_score,
+        "playoff_sos_rank": p.playoff_sos_rank, "playoff_sos_score": p.playoff_sos_score,
+        "vacated_share": p.vacated_share, "vacated_departed": p.vacated_departed,
+        "redzone_share": p.redzone_share, "redzone_touches": p.redzone_touches,
+        "durability": p.durability, "durability_seasons": p.durability_seasons,
+        "handcuff_key": p.handcuff_key, "handcuff_name": p.handcuff_name,
         "drafted": p.key in st.drafted_keys(),
         "survival": (survival_prob(p, horizon, st.current_pick, hazards)
                      if horizon and p.key not in st.drafted_keys() else None),
@@ -338,6 +403,7 @@ def make_pick(payload: dict):
         pick = b.state.record(p, slot=payload.get("slot"))
     except ValueError as e:
         return {"ok": False, "error": str(e)}
+    journal.append(pick)
     return {"ok": True, "pick": {"overall": pick.overall, "slot": pick.team_slot,
                                  "name": pick.player_name}}
 
@@ -357,7 +423,10 @@ def choose_slot(payload: dict):
 
 @app.post("/api/undo")
 def undo():
-    p = board().state.undo()
+    st = board().state
+    p = st.undo()
+    if p:
+        journal.rewrite(st.picks)
     return {"ok": p is not None, "undone": p.player_name if p else None}
 
 
@@ -365,6 +434,7 @@ def undo():
 def reset():
     b = board()
     b.state.picks.clear()
+    journal.clear()
     return {"ok": True}
 
 

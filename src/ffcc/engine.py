@@ -9,6 +9,8 @@ import datetime as _dt
 import re
 
 from .config import CONFIG_DIR, LeagueConfig, load_league
+from .context.attach import attach_context, attach_handcuffs
+from .context.signals import load_or_build as load_context
 from .draft.state import DraftState
 from .history.production import load_or_build as load_production
 from .history.rounds import load_or_build as load_round_value
@@ -106,8 +108,16 @@ def build_board(cfg: LeagueConfig | None = None, season: int = 2026) -> Board:
     players, report = build_players(
         league_adp_format=cfg.adp_format, teams=cfg.teams, year=season, current_season=season
     )
+    attach_handcuffs(players)
     attach_projections(players, cfg.scoring, current_season=season, fmt=cfg.adp_format,
                        teams=cfg.teams, cfg=cfg)
+
+    try:
+        ctx = load_context(cfg, season=season)
+        attach_context(players, ctx)
+    except Exception:  # noqa: BLE001 - context is an enhancement, never a dependency
+        log.warning("team-context signals unavailable; proceeding without them", exc_info=True)
+
     replacement = attach_vor(players, cfg)
     attach_tiers(players)
     attach_ranks(players)

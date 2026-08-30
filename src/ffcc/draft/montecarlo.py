@@ -72,13 +72,45 @@ def _roster_positions(players) -> dict[str, int]:
     return counts
 
 
-def _wants(cfg: LeagueConfig, roster, position: str) -> bool:
-    """Would a rational team still add this position?"""
+REACH_WINDOW = 3   # how far into the perceived board a team will look to fill a real need
+
+
+def _wants(cfg: LeagueConfig, counts: dict[str, int], position: str) -> bool:
+    """Would a rational team still add this position? `counts` is a
+    position -> count dict, same shape `_roster_positions` and `starter_gaps`
+    already use -- not a player list, so this works for opponents (who this
+    simulation only ever tracks by position count) as well as for "mine".
+    """
     if position in ("DEF", "K"):
         return False          # simulated teams never spend early picks here
-    counts = _roster_positions(roster)
     cap = cfg.roster.get(position, 1) + (2 if position in cfg.flex_eligible else 0)
     return counts.get(position, 0) < cap
+
+
+def _reach_index(cfg, counts, pool, board_order, taken):
+    """Pick for a simulated opponent: among the next few want-eligible
+    players in perceived order, prefer one that fills a still-empty required
+    starter slot. Models a real drafter reaching a little for a glaring need
+    rather than following pure best-player-available -- bounded to a small
+    window so it nudges the pick, never overrides value outright.
+    """
+    gaps = starter_gaps(cfg, counts)
+    seen = []
+    for bi in board_order:
+        if taken[bi]:
+            continue
+        p = pool[bi]
+        if not _wants(cfg, counts, p.position):
+            continue
+        seen.append(bi)
+        if len(seen) >= REACH_WINDOW:
+            break
+    if not seen:
+        return None
+    for bi in seen:
+        if gaps.get(pool[bi].position, 0) > 0:
+            return bi
+    return seen[0]
 
 
 def simulate(
@@ -89,6 +121,7 @@ def simulate(
     sims: int = DEFAULT_SIMS,
     horizon: int = DEFAULT_HORIZON,
     rng: np.random.Generator | None = None,
+    seed: int | None = None,
     budget: float = TIME_BUDGET,
     hazards: dict[str, float] | None = None,
 ) -> list[PickOdds]:
@@ -102,7 +135,11 @@ def simulate(
     reason other than one code path having access to what was learned and
     another not asking for it.
     """
-    rng = rng or np.random.default_rng()
+    # A fixed `seed` makes the whole simulation deterministic for a given board
+    # state. The web app passes one derived from the picks entered so far, so an
+    # idle refresh re-runs the same draft and the pick probabilities hold still
+    # instead of jittering the headline recommendation every few seconds.
+    rng = rng or np.random.default_rng(seed)
     started = time.perf_counter()
 
     pool = sorted(state.available(players), key=lambda p: -p.vor)[:UNIVERSE]
@@ -149,21 +186,36 @@ def simulate(
             if cand.key in idx:
                 taken[idx[cand.key]] = True
             mine = list(my_current) + [cand]
+            # Opponent rosters only need to be tracked by position count --
+            # never fed into scoring, just into their own need-gating below.
+            opp_counts: dict[int, dict[str, int]] = {}
 
             for overall in range(start + 1, last_pick + 1):
                 slot = order[overall - 1]
                 is_mine = slot == my_slot
-                roster = mine if is_mine else []
-                for bi in board_order:
-                    if taken[bi]:
-                        continue
-                    p = pool[bi]
-                    if is_mine and not _wants(cfg, roster, p.position):
-                        continue
-                    taken[bi] = True
-                    if is_mine:
-                        mine.append(p)
-                    break
+
+                if is_mine:
+                    counts = _roster_positions(mine)
+                    bi = None
+                    for cand_bi in board_order:
+                        if taken[cand_bi]:
+                            continue
+                        if not _wants(cfg, counts, pool[cand_bi].position):
+                            continue
+                        bi = cand_bi
+                        break
+                else:
+                    counts = opp_counts.setdefault(slot, {})
+                    bi = _reach_index(cfg, counts, pool, board_order, taken)
+
+                if bi is None:
+                    continue   # nobody left this team is willing to draft this turn
+                taken[bi] = True
+                p = pool[bi]
+                if is_mine:
+                    mine.append(p)
+                else:
+                    counts[p.position] = counts.get(p.position, 0) + 1
 
             pts, _ = optimal_lineup(mine, cfg)
             # Unfilled starters are credited identically across candidates, so

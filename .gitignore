@@ -14,6 +14,8 @@ data/logos/
 data/production.json
 data/aging.json
 data/round_value.json
+data/context.json
+data/draft_journal.jsonl
 data/*.db
 data/*.sqlite
 config/secrets.yaml

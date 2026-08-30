@@ -19,6 +19,38 @@ const SCARCITY_POS = ["RB", "WR", "TE", "QB"];   // DEF/K have no real tiers
 const pct = (v) => Math.round(v * 100);
 const signed = (v) => (v > 0 ? "+" : v < 0 ? "\u2212" : "") + Math.abs(v);
 
+// Transient confirmation for anything that mutates the draft. A pick is a
+// permanent, easy-to-mis-enter action in a fast room -- so every pick says
+// what it recorded and offers an inline way back, and every undo names what
+// it removed. `action` gets its own button; the toast auto-dismisses.
+let toastTimer = null;
+function toast(text, { kind = "ok", action } = {}) {
+  const box = $("toasts");
+  if (!box) return;
+  const el = document.createElement("div");
+  el.className = "toast" + (kind === "err" ? " err" : "");
+  el.innerHTML = `<span class="ti">${kind === "err" ? "!" : "\u2713"}</span>
+    <span class="tx">${esc(text)}</span>`;
+  if (action) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.textContent = action.label;
+    b.onclick = () => { dismiss(); action.onClick(); };
+    el.appendChild(b);
+  }
+  const dismiss = () => {
+    if (el.dataset.gone) return;
+    el.dataset.gone = "1";
+    el.classList.add("out");
+    setTimeout(() => el.remove(), 240);
+  };
+  // One at a time -- stacked pick toasts under a fast clock are noise.
+  [...box.children].forEach((c) => c.remove());
+  clearTimeout(toastTimer);
+  box.appendChild(el);
+  toastTimer = setTimeout(dismiss, action ? 8000 : 4500);
+}
+
 // Sequential ramp for magnitude. Survival is a quantity, not a status, so it
 // steps through one hue rather than borrowing the reserved good/warning colors.
 const SEQ = ["--seq-1", "--seq-2", "--seq-3", "--seq-4", "--seq-5"];
@@ -188,12 +220,35 @@ function quickDraftBtn(key, cls = "qdraft") {
 // stopPropagation() here would run too late -- the row's handler, attached
 // directly on the row, fires on the way up before a same-phase document
 // listener ever sees the event. Capture fires top-down, ahead of it.
+//
+// Two taps to commit from a list row or card: the first arms the button
+// (amber, "Draft?"), the second within a few seconds records the pick. A
+// stray click while scrolling a 90-row table can't burn a real pick. The
+// hero's own big checkmark stays one tap -- it's a deliberate single target.
+let armedQ = null;
+let armTimer = null;
+function disarmQ() {
+  clearTimeout(armTimer);
+  if (armedQ && armedQ.isConnected) {
+    armedQ.classList.remove("arm");
+    armedQ.textContent = "✓";
+    armedQ.setAttribute("aria-label", "Draft instantly");
+  }
+  armedQ = null;
+}
 document.addEventListener("click", (e) => {
   const q = e.target.closest("[data-qdraft]");
-  if (!q) return;
+  if (!q) { disarmQ(); return; }
   e.preventDefault();
   e.stopPropagation();
-  draft(q.dataset.qdraft);
+  if (q.classList.contains("qdraft-hero")) { disarmQ(); draft(q.dataset.qdraft); return; }
+  if (q === armedQ) { const key = q.dataset.qdraft; disarmQ(); draft(key); return; }
+  disarmQ();
+  armedQ = q;
+  q.classList.add("arm");
+  q.textContent = "Draft?";
+  q.setAttribute("aria-label", "Confirm draft");
+  armTimer = setTimeout(disarmQ, 3000);
 }, true);
 document.addEventListener("click", (e) => {
   const blk = e.target.closest(".ladderblk");
@@ -242,6 +297,143 @@ function avatar(p, size = 38) {
   return p.pos === "DEF"
     ? face(p.team_logo, p.team, size, "/logos/")
     : face(p.headshot, p.name, size);
+}
+
+function ordinal(n) {
+  const j = n % 10, k = n % 100;
+  if (j === 1 && k !== 11) return "st";
+  if (j === 2 && k !== 12) return "nd";
+  if (j === 3 && k !== 13) return "rd";
+  return "th";
+}
+
+// Low rank (1) is good for O-line/schedule; high share is good for vacated
+// opportunity -- `lowIsGood` just flips which end of the scale is --good.
+function ctxTone(value, lowIsGood, goodAt, badAt) {
+  if (value == null) return "var(--fg)";
+  const hit = lowIsGood ? value <= goodAt : value >= goodAt;
+  const miss = lowIsGood ? value >= badAt : value <= badAt;
+  return hit ? "var(--good)" : miss ? "var(--critical)" : "var(--fg)";
+}
+
+// Vacated share only ever tells a good-news-or-no-news story -- a small
+// share just means the team didn't lose much, not a red flag on the player.
+function ctxToneUp(value, goodAt) {
+  return value >= goodAt ? "var(--good)" : "var(--fg)";
+}
+
+// Context beyond the player's own stat line -- O-line strength/continuity,
+// this season's schedule by position, and offseason-vacated volume. Only
+// renders rows that actually apply to this position (context.attach on the
+// backend already scopes which fields get filled in).
+function contextCard(d) {
+  const rows = [];
+
+  if (d.oline_rank != null) {
+    const tone = ctxTone(d.oline_rank, true, 10, 23);
+    const names = (d.oline_departed || []).map(esc).slice(0, 2).join(", ");
+    const trend = d.oline_returning != null
+      ? `${d.oline_returning}/${d.oline_total} starters back${names ? ` — lost ${names}` : ""}`
+      : "";
+    rows.push(`
+      <div class="pfrow"><span>O-line, last season</span>
+        <b style="color:${tone}">${d.oline_rank}${ordinal(d.oline_rank)} of 32</b></div>
+      ${trend ? `<p class="pfctxnote">${trend}</p>` : ""}`);
+  }
+
+  if (d.sos_rank != null) {
+    const tone = ctxTone(d.sos_rank, true, 10, 23);
+    rows.push(`
+      <div class="pfrow"><span>Schedule vs ${d.pos}</span>
+        <b style="color:${tone}">${d.sos_rank}${ordinal(d.sos_rank)} easiest</b></div>`);
+  }
+
+  if (d.playoff_sos_rank != null) {
+    const tone = ctxTone(d.playoff_sos_rank, true, 10, 23);
+    rows.push(`
+      <div class="pfrow"><span>Fantasy-playoff schedule <small>(wk 15–17)</small></span>
+        <b style="color:${tone}">${d.playoff_sos_rank}${ordinal(d.playoff_sos_rank)} easiest</b></div>`);
+  }
+
+  if (d.vacated_share) {
+    const tone = ctxToneUp(d.vacated_share, 0.2);
+    const word = d.pos === "RB" ? "carries" : "targets";
+    const names = (d.vacated_departed || []).map((x) => esc(x.name)).slice(0, 2).join(", ");
+    rows.push(`
+      <div class="pfrow"><span>Vacated ${word}</span>
+        <b style="color:${tone}">${Math.round(d.vacated_share * 100)}%</b></div>
+      ${names ? `<p class="pfctxnote">from ${names}</p>` : ""}`);
+  }
+
+  if (d.redzone_share) {
+    const tone = ctxToneUp(d.redzone_share, 0.3);
+    rows.push(`
+      <div class="pfrow"><span>Red-zone share</span>
+        <b style="color:${tone}">${Math.round(d.redzone_share * 100)}%</b></div>
+      <p class="pfctxnote">${d.redzone_touches} of the team's red-zone touches last season</p>`);
+  }
+
+  if (!rows.length) return "";
+  return `<h3>Team context</h3>
+    <p class="pfctxnote pfctxlede">Last season's evidence, applied to this year.</p>
+    ${rows.join("")}`;
+}
+
+// Injury durability and handcuff insurance -- about the player himself, not
+// his team, so kept as a separate card rather than folded into Team context.
+function riskCard(d) {
+  const rows = [];
+
+  if (d.durability != null) {
+    const tone = ctxTone(d.durability, false, 0.88, 0.75);
+    const yrs = d.durability_seasons === 1 ? "1 year" : `${d.durability_seasons} years`;
+    rows.push(`
+      <div class="pfrow"><span>Career durability</span>
+        <b style="color:${tone}">${Math.round(d.durability * 100)}%</b></div>
+      <p class="pfctxnote">share of a season's games played, averaged over ${yrs}</p>`);
+  }
+
+  if (d.handcuff_name) {
+    rows.push(`
+      <div class="pfrow"><span>Handcuff</span>
+        <b><a href="#" class="handcufflink" data-key="${esc(d.handcuff_key)}">${esc(d.handcuff_name)}</a></b></div>
+      <p class="pfctxnote">next up on the depth chart if he's hurt</p>`);
+  }
+
+  if (!rows.length) return "";
+  return `<h3>Risk &amp; insurance</h3>${rows.join("")}`;
+}
+
+// Modal plumbing shared by the profile and the recap: mark the card as a
+// dialog for assistive tech, keep Tab inside it while it's open, and hand
+// focus back to wherever it came from on close.
+let modalReturnFocus = null;
+let modalTrap = null;
+
+function armModal(label) {
+  const panel = $("profile");
+  const card = panel.querySelector(".pf");
+  if (!card) return;
+  // Opening a second modal over the first (e.g. a handcuff link) -- drop the
+  // previous trap before wiring a new one, and keep the original return target.
+  if (modalTrap) panel.removeEventListener("keydown", modalTrap);
+  card.setAttribute("role", "dialog");
+  card.setAttribute("aria-modal", "true");
+  card.setAttribute("aria-label", label);
+  card.tabIndex = -1;
+  if (panel.hidden || !modalReturnFocus) modalReturnFocus = document.activeElement;
+  (panel.querySelector("#pfclose") || card).focus();
+  modalTrap = (e) => {
+    if (e.key !== "Tab") return;
+    const f = [...panel.querySelectorAll(
+      'button, a[href], input, select, textarea, [tabindex]:not([tabindex="-1"])')]
+      .filter((el) => el.offsetParent !== null);
+    if (!f.length) return;
+    const first = f[0], last = f[f.length - 1];
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+  };
+  panel.addEventListener("keydown", modalTrap);
 }
 
 async function openProfile(key) {
@@ -301,6 +493,9 @@ async function openProfile(key) {
         ? `<div class="pfdrafted">Already drafted</div>`
         : `<button class="pfdraft" id="pfdraft">Draft ${esc(d.name)}</button>`}
 
+      ${contextCard(d)}
+      ${riskCard(d)}
+
       <h3>Positional finish by season</h3>
       ${rankSpark(d.seasons, d.pos)}
       ${d.seasons.length ? `<table class="pfseasons">
@@ -338,15 +533,108 @@ async function openProfile(key) {
   $("pfclose").onclick = closeProfile;
   const draftBtn = document.getElementById("pfdraft");
   if (draftBtn) draftBtn.onclick = () => { closeProfile(); draft(d.key); };
-  panel.querySelector(".pf")?.focus?.();
+  const handcuff = panel.querySelector(".handcufflink");
+  if (handcuff) handcuff.onclick = (e) => { e.preventDefault(); openProfile(handcuff.dataset.key); };
+  armModal(`${d.name} — player profile`);
+}
+
+// A plain-text version of the recap, for pasting into the league chat.
+function recapSummary(d) {
+  const head = d.complete ? "Draft recap" : `Draft so far (${d.picks_made}/${d.total_picks})`;
+  const grade = d.grade
+    ? `Grade ${d.grade.letter}` +
+      (d.grade.league_rank ? ` — ${d.grade.league_rank} of ${d.grade.of}` : "") +
+      ` · ${d.starter_points} projected starter pts`
+    : "";
+  const roster = d.roster.map((pk) =>
+    `  ${pk.overall}. ${pk.name} (${pk.pos})  ${signed(pk.value)}`);
+  return [head, grade, "", "Roster:", ...roster].filter((x) => x != null).join("\n");
+}
+
+async function openRecap() {
+  const d = await api("/api/recap");
+  if (!d.ok) return;
+  const panel = $("profile");
+
+  const rank = d.grade?.league_rank;
+  const verdict = d.grade
+    ? `${d.complete ? "Final grade" : "Projected grade"} ${d.grade.letter}` +
+      (rank ? `, ${rank}${ordinal(rank)} of ${d.grade.of}` : "") + "." +
+      (d.grade.notes?.length ? ` ${d.grade.notes.join(" · ")}.` : "")
+    : "";
+
+  const valueRow = (pk) => `
+    <div class="pfrow"><span>${esc(pk.name)}
+      <span class="mut">(Rd ${pk.round}, pick ${pk.overall})</span></span>
+      <b class="${pk.value > 0 ? "up" : pk.value < 0 ? "down" : ""}">${signed(pk.value)} VOR</b></div>`;
+
+  const rosterRow = (pk) => `
+    <tr class="${pk.starter ? "" : "bench"}">
+      <td class="mut num">${pk.overall}</td>
+      <td>${esc(pk.name)}</td>
+      <td><span class="pos ${pk.pos}">${pk.pos}</span></td>
+      <td class="mut">${esc(pk.team)}</td>
+      <td class="num tnum">${pk.proj}</td>
+      <td class="num tnum ${pk.value > 0 ? "up" : pk.value < 0 ? "down" : ""}">${signed(pk.value)}</td>
+    </tr>`;
+
+  panel.innerHTML = `
+    <div class="pf recap">
+      <button class="pfclose" id="pfclose" aria-label="Close recap">×</button>
+      <div class="recaphead">
+        ${d.grade ? `<div class="recapgrade">${d.grade.letter}</div>` : ""}
+        <div>
+          <div class="pfname">${d.complete ? "Draft recap" : "Draft so far"}</div>
+          <div class="pfmeta"><span>${d.picks_made}/${d.total_picks} picks</span>
+            ${rank ? `<span>· ${rank}${ordinal(rank)} of ${d.grade.of}</span>` : ""}
+            <span>· ${d.starter_points} projected starter pts</span></div>
+        </div>
+      </div>
+      ${verdict ? `<p class="recapverdict">${esc(verdict)}</p>` : ""}
+      <div class="recapbar">
+        <button class="pfbtn" id="recapcopy" type="button">Copy summary for the league chat</button>
+      </div>
+
+      <div class="recapcols${d.best_value.length && d.biggest_reaches.length ? "" : " one"}">
+        ${d.best_value.length ? `<div><h3>Best value</h3>${d.best_value.map(valueRow).join("")}</div>` : ""}
+        ${d.biggest_reaches.length ? `<div><h3>Biggest reaches</h3>${d.biggest_reaches.map(valueRow).join("")}</div>` : ""}
+      </div>
+
+      <h3>Full roster</h3>
+      ${d.roster.length ? `<table class="pfseasons recaptable">
+        <thead><tr><th>Pick</th><th>Player</th><th>Pos</th><th>Team</th>
+          <th class="num">Proj</th><th class="num">Value</th></tr></thead>
+        <tbody>${d.roster.map(rosterRow).join("")}</tbody></table>
+        <p class="tierlegend"><i style="background:var(--fg-4)"></i>Bench</p>`
+        : `<p class="nodata">No picks yet.</p>`}
+    </div>`;
+  panel.hidden = false;
+  panel.classList.remove("closing");
+  requestAnimationFrame(() => requestAnimationFrame(() => panel.classList.add("open")));
+  $("pfclose").onclick = closeProfile;
+  const copyBtn = document.getElementById("recapcopy");
+  if (copyBtn) copyBtn.onclick = async () => {
+    try {
+      await navigator.clipboard.writeText(recapSummary(d));
+      toast("Recap copied to the clipboard.");
+    } catch {
+      toast("Couldn't reach the clipboard — copy from the roster table instead.", { kind: "err" });
+    }
+  };
+  armModal(d.complete ? "Draft recap" : "Draft so far");
 }
 
 function closeProfile() {
   const panel = $("profile");
   if (panel.hidden) return;
+  if (modalTrap) { panel.removeEventListener("keydown", modalTrap); modalTrap = null; }
   panel.classList.remove("open");
   panel.classList.add("closing");
-  const done = () => { panel.hidden = true; panel.classList.remove("closing"); };
+  const done = () => {
+    panel.hidden = true; panel.classList.remove("closing");
+    if (modalReturnFocus && modalReturnFocus.isConnected) modalReturnFocus.focus();
+    modalReturnFocus = null;
+  };
   // If motion is reduced the transition never fires, so hide immediately
   // rather than waiting on an event that will never arrive.
   if (matchMedia("(prefers-reduced-motion: reduce)").matches) { done(); return; }
@@ -417,10 +705,28 @@ async function draft(key) {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ key }),
     });
-    if (!r.ok) { $("status").textContent = r.error; return; }
+    if (!r.ok) { $("status").textContent = r.error; toast(r.error, { kind: "err" }); return; }
+    $("status").textContent = "";
     $("q").value = ""; results = []; drawDrop();
+    const p = r.pick || {};
+    toast(`Recorded ${p.name ?? "pick"} — Team ${p.slot ?? "?"}, pick ${p.overall ?? "?"}`,
+          { action: { label: "Undo", onClick: undoLast } });
     await refresh();
-  } catch { $("status").textContent = "Could not record that pick — check the server."; }
+  } catch {
+    $("status").textContent = "Could not record that pick — check the server.";
+    toast("Could not record that pick — check the server.", { kind: "err" });
+  }
+}
+
+async function undoLast() {
+  try {
+    const r = await api("/api/undo", { method: "POST" });
+    if (r.ok && r.undone) toast(`Removed ${r.undone}`);
+    else if (!r.ok) toast("Nothing to undo.", { kind: "err" });
+  } catch {
+    toast("Could not reach the server to undo.", { kind: "err" });
+  }
+  refresh();
 }
 
 $("q").addEventListener("input", (e) => search(e.target.value));
@@ -430,7 +736,8 @@ $("q").addEventListener("keydown", (e) => {
   else if (e.key === "Enter" && results[sel]) { draft(results[sel].key); e.preventDefault(); }
   else if (e.key === "Escape") { $("q").value = ""; results = []; drawDrop(); }
 });
-$("undo").onclick = async () => { await api("/api/undo", { method: "POST" }); refresh(); };
+$("undo").onclick = undoLast;
+$("recapbtn").onclick = openRecap;
 $("slot").onchange = async (e) => {
   const r = await api("/api/slot", {
     method: "POST", headers: { "Content-Type": "application/json" },
@@ -454,8 +761,18 @@ $("gridbtn").onclick = () => {
 };
 document.addEventListener("keydown", (e) => {
   if (e.target.tagName === "INPUT") return;
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  const k = e.key.toLowerCase();   // match D/U whether or not Shift or Caps Lock is held
   if (e.key === "/") { e.preventDefault(); $("q").focus(); }
-  if (e.key === "u") $("undo").click();
+  if (k === "u") $("undo").click();
+  // Pure-speed path for the clock: draft the top recommendation without
+  // touching the mouse. Only fires on your own turn -- on anyone else's,
+  // "top recommendation" means nothing, since that's a real external pick
+  // you still have to enter yourself.
+  if (k === "d" && S?.is_my_turn && S.recommendations?.[0]) {
+    e.preventDefault();
+    draft(S.recommendations[0].key);
+  }
 });
 
 // ── rendering ─────────────────────────────────────────────────
@@ -476,6 +793,7 @@ function render() {
   $("pickno").textContent = `${S.current_pick}/${S.total_picks}`;
   $("rnd").textContent = S.round;
   $("clock").textContent = S.complete ? "Done" : `Team ${S.on_clock}`;
+  $("recapbtn").classList.toggle("done", S.complete);
   $("mynext").textContent = S.my_next_pick ?? "—";
   $("until").textContent = S.is_my_turn ? "Now" : S.picks_until_mine;
 
@@ -484,6 +802,7 @@ function render() {
   $("turntext").textContent = S.complete ? "Draft complete"
     : S.is_my_turn ? "You are on the clock" : `Team ${S.on_clock} is picking`;
 
+  renderTicker();
   if (showGrid) { renderGrid(); return; }
   const ri = S.round_insight;
   $("roundtip").innerHTML = ri
@@ -511,8 +830,8 @@ function renderHero() {
   const tie = (top.tied_with || []).length
     ? `<div class="tie">Too close to call against ${esc(top.tied_with[0])}</div>` : "";
   $("hero").innerHTML = `
-    <div class="hero ${isNew ? "enter" : ""}" data-key="${esc(top.key)}">
-      <div class="lead">${esc(lead)}</div>
+    <div class="hero ${isNew ? "enter" : ""} ${S.is_my_turn ? "myturn" : ""}" data-key="${esc(top.key)}">
+      <div class="lead">${esc(lead)}${S.is_my_turn ? ` <kbd class="leadkey" title="Press D to draft this player">D</kbd>` : ""}</div>
       <div class="herotop">
         ${avatar(top, 52)}
         <div class="heroid">
@@ -638,10 +957,10 @@ function renderLadder() {
 function sortRows(rows) {
   const { key, dir } = sortState;
   const singlePos = posFilter !== "ALL" && posFilter !== "FLEX";
-  // These two columns display a different underlying field depending on the
+  // Predicted rank displays a different underlying field depending on the
   // filter (overall vs. positional) -- sorting must follow whichever number
   // is actually on screen, or the column header's arrow would lie.
-  const OVERALL_SWAP = { predicted_rank: "predicted_rank_overall", last_year_rank: "last_year_rank_overall" };
+  const OVERALL_SWAP = { predicted_rank: "predicted_rank_overall" };
   const val = (p) => {
     if (key === "name" || key === "pos" || key === "team") return (p[key] || "").toLowerCase();
     const field = !singlePos && OVERALL_SWAP[key] ? OVERALL_SWAP[key] : key;
@@ -684,7 +1003,7 @@ function renderBoard() {
     posFilter === "ALL" ? true : posFilter === "FLEX" ? flexPos.includes(p.pos) : p.pos === posFilter
   ).slice(0, 90);
   if (!filtered.length) {
-    $("board").innerHTML = `<tr><td colspan="13"><div class="empty-state">No ${posFilter} players left.</div></td></tr>`;
+    $("board").innerHTML = `<tr><td colspan="11"><div class="empty-state">No ${posFilter} players left.</div></td></tr>`;
     return;
   }
   // Tier-cliff dividers mean something whenever row order tracks tier
@@ -721,16 +1040,14 @@ function renderBoard() {
       <td>${p.pos}</td>
       <td>${teamCell}</td>
       <td class="num mut tnum">${(singlePos ? p.predicted_rank : p.predicted_rank_overall) ?? "—"}</td>
-      <td class="num mut tnum">${(singlePos ? p.last_year_rank : p.last_year_rank_overall) ?? "—"}</td>
-      <td class="num mut tnum">${p.age ?? "—"}</td>
       <td class="num mut tnum">${p.tier}</td>
       <td class="vbar"><i style="width:${w}%"></i><b class="tnum">${p.vor}</b></td>
-      <td class="num mut tnum">${p.proj}</td>
-      <td class="num mut tnum">${p.adp ?? "—"}</td>
-      <td class="num mut tnum">${p.bye ?? "—"}</td>
       <td class="num">${s == null ? '<span class="mut">—</span>' : `
         <span class="meter"><i><b style="width:${pct(s)}%;background:${seqFor(s)}"></b></i>
         <span class="mut tnum">${pct(s)}%</span></span>`}</td>
+      <td class="num mut tnum">${p.adp ?? "—"}</td>
+      <td class="num mut tnum">${p.proj}</td>
+      <td class="num mut tnum">${p.bye ?? "—"}</td>
     </tr>`;
   }).join("");
   [...$("board").children].forEach((tr) => {
@@ -754,6 +1071,23 @@ function renderRoster() {
   $("needs").innerHTML = needs.length
     ? needs.map(([k, v]) => `<span class="chip">${k}${v > 1 ? ` ×${v}` : ""}</span>`).join("")
     : `<span class="chip ok">Every starting slot filled</span>`;
+}
+
+// Recent picks, newest first -- the "what did I miss" strip for when you look
+// up from your phone mid-round. The API already sends the last dozen; this
+// just draws them.
+function renderTicker() {
+  const t = $("ticker");
+  const recent = S.recent || [];
+  if (!recent.length) { t.hidden = true; t.innerHTML = ""; return; }
+  t.hidden = false;
+  t.innerHTML = [...recent].reverse().map((p) => {
+    const r = Math.floor((p.overall - 1) / S.teams) + 1;
+    const pp = ((p.overall - 1) % S.teams) + 1;
+    return `<span class="tk ${p.slot === S.my_slot ? "mine" : ""}">
+      <span class="pk">${r}.${String(pp).padStart(2, "0")}</span>
+      <span class="pos ${p.pos}">${p.pos}</span>${esc(p.name)}</span>`;
+  }).join("");
 }
 
 // Pace: how fast each position is leaving the board relative to market ADP.

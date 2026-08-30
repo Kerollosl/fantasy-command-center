@@ -164,3 +164,26 @@ def grade_all(state, players, cfg: LeagueConfig) -> list[TeamGrade]:
     for rank, g in enumerate(order):
         g.letter = letters[min(rank * len(letters) // max(len(order), 1), len(letters) - 1)]
     return sorted(raw, key=lambda g: g.slot)
+
+
+def pick_values(state, players, cfg: LeagueConfig, slot: int) -> list[dict]:
+    """One team's picks, each with value captured above the VOR that draft
+    slot normally returns -- the same VAS logic `grade_all` aggregates,
+    exposed per-pick. Basis for an end-of-draft "best value" / "biggest
+    reach" recap.
+    """
+    by_key = {p.key: p for p in players}
+    curve = _vor_curve(players)
+    out = []
+    for pk in state.roster(slot):
+        p = by_key.get(pk.player_key)
+        if not p:
+            continue
+        expected = _expected_vor_at(curve, pk.overall)
+        out.append({
+            "key": p.key, "name": p.name, "pos": p.position, "team": p.team,
+            "overall": pk.overall, "round": (pk.overall - 1) // cfg.teams + 1,
+            "proj": p.proj_points, "vor": p.vor,
+            "expected_vor": round(expected, 1), "value": round(p.vor - expected, 1),
+        })
+    return out

@@ -69,6 +69,32 @@ class Player:
     vor: float = 0.0
     tier: int = 0
 
+    # team context, filled in by context.attach.attach_context
+    oline_rank: int | None = None          # 1-32, this team's O-line last season (1 = best)
+    oline_score: float | None = None
+    oline_continuity: float | None = None  # 0-1, fraction of last season's starting five still on the roster
+    oline_returning: int | None = None
+    oline_total: int | None = None
+    oline_departed: list = field(default_factory=list)
+    sos_rank: int | None = None            # 1-32, this season's schedule vs this position (1 = easiest)
+    sos_score: float | None = None
+    playoff_sos_rank: int | None = None    # 1-32, schedule across fantasy-playoff weeks 15-17 only
+    playoff_sos_score: float | None = None
+    vacated_share: float | None = None     # 0-1, share of last season's team volume at this position now gone
+    vacated_departed: list = field(default_factory=list)
+    redzone_share: float | None = None     # 0-1, share of his team's red-zone touches last season
+    redzone_touches: int | None = None
+
+    # career durability, filled in by context.attach.attach_context -- display
+    # only, never a proj_points input (baseline_projection already discounts
+    # for missed games via its own exp_games calculation)
+    durability: float | None = None        # 0-1, career-average share of a season's games played
+    durability_seasons: int | None = None
+
+    # handcuff, filled in by context.attach.attach_handcuffs (RB only)
+    handcuff_key: str | None = None
+    handcuff_name: str | None = None
+
     @property
     def is_risky(self) -> bool:
         return (self.injury_status or "") in sleeper.RISK_STATUSES

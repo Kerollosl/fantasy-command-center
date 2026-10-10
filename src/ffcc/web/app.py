@@ -12,6 +12,7 @@ import zlib
 from pathlib import Path
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from pydantic import BaseModel, ConfigDict, Field, StrictInt
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -180,8 +181,17 @@ def _grid(state, cfg):
     return rows
 
 
+_snapshot_cache = None
 @synchronized
 def snapshot():
+    global _snapshot_cache
+    b=board()
+    key=(id(b),repr(b.cfg),tuple((p.overall,p.player_key,p.team_slot) for p in b.state.picks))
+    if _snapshot_cache is None or _snapshot_cache[0]!=key:
+        _snapshot_cache=(key,_compute_snapshot())
+    return copy.deepcopy(_snapshot_cache[1])
+
+def _compute_snapshot():
     b = board()
     st, cfg = b.state, b.cfg
     keys = b.by_key()
@@ -424,9 +434,19 @@ def search(q: str, all_players: bool = False):
     ]
 
 
+class PickRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    key: str = Field(min_length=1, max_length=200)
+    slot: StrictInt | None = Field(default=None, ge=1)
+
+class SlotRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    slot: StrictInt = Field(ge=1)
+
 @app.post("/api/pick")
 @synchronized
-def make_pick(payload: dict):
+def make_pick(payload: PickRequest):
+    payload=payload.model_dump()
     b = board()
     key = payload.get("key")
     p = b.by_key().get(key)
@@ -445,7 +465,8 @@ def make_pick(payload: dict):
 
 @app.post("/api/slot")
 @synchronized
-def choose_slot(payload: dict):
+def choose_slot(payload: SlotRequest):
+    payload=payload.model_dump()
     b = board()
     try:
         slot = int(payload.get("slot"))

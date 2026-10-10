@@ -66,6 +66,8 @@ class DraftState:
         return {p.player_key for p in self.picks}
 
     def record(self, player, slot: int | None = None) -> Pick:
+        if slot is not None and (type(slot) is not int or not 1 <= slot <= self.cfg.teams):
+            raise ValueError("slot must be a valid team number")
         if self.is_complete:
             raise ValueError("draft is already complete")
         if player.key in self.drafted_keys():
@@ -99,3 +101,4 @@ class DraftState:
 
     def recent_positions(self, n: int = 8) -> list[str]:
         return [p.position for p in self.picks[-n:]]
+

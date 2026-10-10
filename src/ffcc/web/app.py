@@ -2,6 +2,12 @@
 from __future__ import annotations
 
 import json
+import copy,os
+from threading import RLock
+from functools import wraps
+from contextlib import asynccontextmanager
+from filelock import FileLock
+from starlette.concurrency import run_in_threadpool
 import zlib
 from pathlib import Path
 
@@ -21,7 +27,23 @@ from ..engine import build_board, set_draft_slot
 from ..history.rounds import insight as round_insight
 
 HERE = Path(__file__).parent
-app = FastAPI(title="Fantasy Command Center")
+@asynccontextmanager
+async def lifespan(app):
+    # An in-memory draft cannot safely be served by independent worker processes.
+    process_lock=FileLock(str(DATA_DIR / "draft-server.lock"))
+    DATA_DIR.mkdir(parents=True,exist_ok=True)
+    process_lock.acquire(timeout=0)
+    try:yield
+    finally:process_lock.release()
+
+app = FastAPI(title="Fantasy Command Center",lifespan=lifespan)
+STATE_LOCK=RLock()
+def synchronized(fn):
+    @wraps(fn)
+    def wrapped(*args,**kwargs):
+        with STATE_LOCK:return fn(*args,**kwargs)
+    return wrapped
+_recovered=False
 app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
 _shots = DATA_DIR / "headshots"
 _shots.mkdir(parents=True, exist_ok=True)
@@ -45,14 +67,20 @@ def _sim_seed(state, cfg) -> int:
     return zlib.crc32(f"{cfg.my_draft_slot}:{state.current_pick}:{picks}".encode())
 
 
+@synchronized
 def board():
-    global BOARD
+    global BOARD, _recovered
     if BOARD is None:
         BOARD = build_board()
+    if not _recovered:
+        journal.configure(BOARD.cfg,os.environ.get("FFCC_SESSION","default"))
         recovered = journal.load()
         if recovered:
             BOARD.state.picks = recovered
             print(f"Recovered {len(recovered)} pick(s) from a prior session's journal.")
+        if any(p.team_slot > BOARD.cfg.teams for p in BOARD.state.picks):
+            raise ValueError("Recovered picks do not match league team count")
+        _recovered=True
     return BOARD
 
 
@@ -152,6 +180,7 @@ def _grid(state, cfg):
     return rows
 
 
+@synchronized
 def snapshot():
     b = board()
     st, cfg = b.state, b.cfg
@@ -302,6 +331,7 @@ def get_state():
 
 
 @app.get("/api/recap")
+@synchronized
 def recap():
     """Draft summary: final grade, full roster, and which picks captured the
     most (and least) value against where the market had them. Meaningful at
@@ -338,6 +368,7 @@ def recap():
 
 
 @app.get("/api/player/{key:path}")
+@synchronized
 def player_profile(key: str):
     """Everything known about one player, for the profile panel."""
     b = board()
@@ -383,6 +414,7 @@ def player_profile(key: str):
 
 
 @app.get("/api/search")
+@synchronized
 def search(q: str, all_players: bool = False):
     b = board()
     return [
@@ -393,6 +425,7 @@ def search(q: str, all_players: bool = False):
 
 
 @app.post("/api/pick")
+@synchronized
 def make_pick(payload: dict):
     b = board()
     key = payload.get("key")
@@ -400,15 +433,18 @@ def make_pick(payload: dict):
     if not p:
         return {"ok": False, "error": f"unknown player: {key}"}
     try:
-        pick = b.state.record(p, slot=payload.get("slot"))
+        candidate = copy.deepcopy(b.state)
+        pick = candidate.record(p, slot=payload.get("slot"))
     except ValueError as e:
         return {"ok": False, "error": str(e)}
-    journal.append(pick)
+    journal.rewrite(candidate.picks)
+    b.state.picks = candidate.picks
     return {"ok": True, "pick": {"overall": pick.overall, "slot": pick.team_slot,
                                  "name": pick.player_name}}
 
 
 @app.post("/api/slot")
+@synchronized
 def choose_slot(payload: dict):
     b = board()
     try:
@@ -422,19 +458,22 @@ def choose_slot(payload: dict):
 
 
 @app.post("/api/undo")
+@synchronized
 def undo():
     st = board().state
-    p = st.undo()
+    p = st.picks[-1] if st.picks else None
     if p:
-        journal.rewrite(st.picks)
+        journal.rewrite(st.picks[:-1])
+        st.undo()
     return {"ok": p is not None, "undone": p.player_name if p else None}
 
 
 @app.post("/api/reset")
+@synchronized
 def reset():
     b = board()
-    b.state.picks.clear()
     journal.clear()
+    b.state.picks.clear()
     return {"ok": True}
 
 
@@ -442,9 +481,10 @@ def reset():
 async def ws(sock: WebSocket):
     await sock.accept()
     try:
-        await sock.send_text(json.dumps(snapshot()))
+        await sock.send_text(json.dumps(await run_in_threadpool(snapshot)))
         while True:
             await sock.receive_text()
-            await sock.send_text(json.dumps(snapshot()))
+            await sock.send_text(json.dumps(await run_in_threadpool(snapshot)))
     except WebSocketDisconnect:
         return
+

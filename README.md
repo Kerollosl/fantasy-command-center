@@ -207,3 +207,8 @@ src/ffcc/
   history/      schema, importers/
   web/          FastAPI app + board UI
 ```
+
+
+## Cleanup behavior and validation limits
+
+Draft journals are scoped by league/session configuration and replaced atomically. A process file lock enforces a single web worker; in-process changes are serialized. Do not run multiple application workers against one journal. A truncated final journal line is recoverable with a warning; invalid interior records fail visibly.

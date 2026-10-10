@@ -1,49 +1,55 @@
-"""Crash recovery for a live draft.
-
-`DraftState` itself stays a pure in-memory dataclass -- easy to construct and
-test with no side effects. This module is the disk-facing wrapper the web
-layer calls at each mutation, so a crash or restart of `ffcc serve` mid-draft
-doesn't lose picks that were already recorded. One draft is at most a few
-hundred lines, so a plain JSON-lines file is enough; no database needed.
-"""
+"""Atomic journal replacement and configuration-scoped recovery."""
 from __future__ import annotations
-
-import json
-
+import dataclasses,hashlib,json,os,tempfile,warnings
+from pathlib import Path
 from ..config import DATA_DIR
 from .state import Pick
+JOURNAL=DATA_DIR/"draft_journal.jsonl"
 
-JOURNAL = DATA_DIR / "draft_journal.jsonl"
-
-
-def append(pick: Pick) -> None:
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    with JOURNAL.open("a") as f:
-        f.write(json.dumps(pick.__dict__) + "\n")
-
-
-def rewrite(picks: list[Pick]) -> None:
-    """Used after undo, which removes exactly one pick. A full rewrite of a
-    single draft's worth of lines is cheap and sidesteps the edge cases of
-    truncating a text file to "all but the last line".
-    """
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    with JOURNAL.open("w") as f:
-        for p in picks:
-            f.write(json.dumps(p.__dict__) + "\n")
+def configure(cfg,session="default"):
+ global JOURNAL
+ values=dataclasses.asdict(cfg);values.pop("my_draft_slot",None)
+ key=hashlib.sha256(json.dumps({"league":values,"session":session},sort_keys=True).encode()).hexdigest()[:20]
+ JOURNAL=DATA_DIR/f"draft_{key}.jsonl"
+ legacy=DATA_DIR/"draft_journal.jsonl"
+ if legacy.exists() and not JOURNAL.exists():
+  scoped=JOURNAL
+  try:
+   JOURNAL=legacy; picks=load()
+   if any(p.team_slot > cfg.teams for p in picks):
+    raise ValueError("Legacy draft does not match league; original retained")
+   JOURNAL=scoped; rewrite(picks)
+   legacy.rename(DATA_DIR/"draft_journal.migrated.jsonl")
+  finally: JOURNAL=scoped
 
 
-def load() -> list[Pick]:
-    if not JOURNAL.exists():
-        return []
-    picks = []
-    for line in JOURNAL.read_text().splitlines():
-        line = line.strip()
-        if line:
-            picks.append(Pick(**json.loads(line)))
-    return picks
+def rewrite(picks):
+ JOURNAL.parent.mkdir(parents=True,exist_ok=True)
+ fd,name=tempfile.mkstemp(dir=JOURNAL.parent,prefix='.draft-',suffix='.tmp')
+ try:
+  with os.fdopen(fd,'w') as f:
+   for pick in picks:f.write(json.dumps(dataclasses.asdict(pick))+'\n')
+   f.flush();os.fsync(f.fileno())
+  os.replace(name,JOURNAL)
+ finally:
+  if os.path.exists(name):os.unlink(name)
 
+def append(pick):rewrite(load()+[pick])
 
-def clear() -> None:
-    if JOURNAL.exists():
-        JOURNAL.unlink()
+def load():
+ if not JOURNAL.exists():return []
+ lines=JOURNAL.read_text().splitlines();picks=[];seen=set()
+ for i,line in enumerate(lines):
+  if not line.strip():continue
+  try:p=Pick(**json.loads(line))
+  except (ValueError,TypeError) as e:
+   if i==len(lines)-1:
+    warnings.warn('Ignored incomplete final draft record; valid picks recovered',RuntimeWarning);break
+   raise ValueError(f'Corrupt draft journal at line {i+1}; original file retained') from e
+  if p.overall!=len(picks)+1 or p.player_key in seen or type(p.team_slot) is not int or p.team_slot<1:raise ValueError('Invalid pick sequence in journal')
+  seen.add(p.player_key);picks.append(p)
+ return picks
+
+def clear():
+ rewrite([])
+ JOURNAL.unlink(missing_ok=True)

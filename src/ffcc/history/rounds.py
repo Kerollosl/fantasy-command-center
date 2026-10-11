@@ -80,13 +80,20 @@ def build(cfg: LeagueConfig, seasons=SEASONS) -> dict:
             "hit_rate": round(cell["hit"] / cell["n"], 3),
             "thin": cell["n"] < MIN_SAMPLE,
         }
-    return {"seasons": list(seasons), "rounds": rounds}
+    return {"seasons": list(seasons), "rounds": rounds, "teams": cfg.teams}
 
 
 def load_or_build(cfg: LeagueConfig, refresh: bool = False) -> dict:
     if not refresh and CACHE.exists():
         try:
-            return json.loads(CACHE.read_text())
+            cached = json.loads(CACHE.read_text())
+            # Rounds are cut at cfg.teams picks and "startable" is a league-wide
+            # count, so a cache built for a different league size is wrong, not
+            # merely stale.
+            if cached.get("teams") == cfg.teams:
+                return cached
+            log.info("round-value cache built for %s teams; rebuilding for %s",
+                     cached.get("teams"), cfg.teams)
         except Exception:  # noqa: BLE001
             log.warning("round-value cache unreadable; rebuilding")
     data = build(cfg)

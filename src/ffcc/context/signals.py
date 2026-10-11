@@ -247,6 +247,86 @@ def _vacated_shares(prior_season: int, season: int) -> dict:
     return out
 
 
+WEAPON_POSITIONS = ("WR", "TE", "RB")
+WEAPON_MIN_TARGETS = 40           # ~2.5 a game -- below this a pass-catcher barely moved the offense
+WEAPON_MIN_CARRIES = 140         # a lead back is a weapon for a QB even as a pure runner (play-action)
+ROOKIE_DRAFT_CUTOFF = 105        # through roughly round 3 -- real draft capital, not a camp body
+
+
+def _weapons_delta(prior_season: int, season: int) -> dict:
+    """Per team: the pass-game weapons added and lost since last season.
+
+    A quarterback is the one skill position with no team-context signal of its
+    own -- vacated share already covers RB/WR/TE from the other direction. This
+    answers what a drafter actually asks about a QB: is the supporting cast
+    better or worse than the year his tape is from. Same roster diff as
+    `_vacated_shares` (last season's usage vs this season's roster), plus
+    incoming rookies with real draft capital.
+    """
+    weekly = nflverse.weekly_stats(prior_season)
+    reg = weekly[(weekly.season_type == "REG")
+                 & weekly.position.isin(WEAPON_POSITIONS)].copy()
+    reg["team"] = reg.team.map(norm_team)
+
+    vol = reg.groupby(
+        ["player_id", "player_display_name", "position"], as_index=False
+    ).agg(targets=("targets", "sum"), rec_yards=("receiving_yards", "sum"),
+          carries=("carries", "sum"))
+    majority_team = reg.groupby("player_id")["team"].agg(
+        lambda s: s.mode().iloc[0] if len(s.mode()) else None
+    )
+    vol["prior_team"] = vol.player_id.map(majority_team)
+
+    def _is_weapon(row) -> bool:
+        if row.position == "RB":
+            return row.targets >= WEAPON_MIN_TARGETS or row.carries >= WEAPON_MIN_CARRIES
+        return row.targets >= WEAPON_MIN_TARGETS
+
+    vol = vol[vol.apply(_is_weapon, axis=1)]
+
+    ros = nflverse.rosters(season)
+    ros = ros[ros.season == season].copy()
+    ros["team"] = ros.team.map(norm_team)
+    rec_pos = ros[ros.position.isin(WEAPON_POSITIONS)]
+    roster_ids = set(rec_pos.gsis_id.dropna())
+    current_by_team = rec_pos.groupby("team")["gsis_id"].apply(
+        lambda s: set(s.dropna())
+    ).to_dict()
+
+    def _entry(row) -> dict:
+        return {
+            "name": row.player_display_name, "pos": row.position,
+            "targets": int(row.targets), "rec_yards": int(row.rec_yards),
+        }
+
+    out: dict[str, dict] = {}
+    for team, cur_ids in current_by_team.items():
+        lost, added = [], []
+        for row in vol.itertuples():
+            if row.prior_team == team and row.player_id not in cur_ids:
+                lost.append({**_entry(row),
+                             "still_in_league": row.player_id in roster_ids})
+            elif row.prior_team and row.prior_team != team and row.player_id in cur_ids:
+                added.append({**_entry(row), "from": row.prior_team})
+        rookies = rec_pos[(rec_pos.team == team)
+                          & (rec_pos.rookie_year == season)
+                          & rec_pos.draft_number.notna()
+                          & (rec_pos.draft_number <= ROOKIE_DRAFT_CUTOFF)]
+        for r in rookies.itertuples():
+            pick = int(r.draft_number)
+            added.append({"name": r.full_name, "pos": r.position,
+                          "rookie": True, "pick": pick, "round": (pick - 1) // 32 + 1})
+        if not lost and not added:
+            continue
+        lost.sort(key=lambda d: -d["targets"])
+        added.sort(key=lambda d: (d.get("rookie", False), -d.get("targets", 0), d.get("pick", 0)))
+        out[team] = {
+            "added": added[:5], "lost": lost[:5],
+            "added_total": len(added), "lost_total": len(lost),
+        }
+    return out
+
+
 def build(cfg: LeagueConfig, season: int = 2026) -> dict:
     prior = season - 1
     oline = _oline_scores(prior)
@@ -256,8 +336,10 @@ def build(cfg: LeagueConfig, season: int = 2026) -> dict:
     playoff_sos, playoff_sos_rank = _sos_from_schedule(z_by_pos, season, weeks=PLAYOFF_WEEKS)
     vacated = _vacated_shares(prior, season)
     redzone = _redzone_shares(prior)
+    weapons = _weapons_delta(prior, season)
 
-    all_teams = set(oline) | set(continuity) | set(sos) | set(vacated) | set(redzone)
+    all_teams = (set(oline) | set(continuity) | set(sos) | set(vacated)
+                 | set(redzone) | set(weapons))
     teams = {}
     for team in all_teams:
         teams[team] = {
@@ -270,6 +352,7 @@ def build(cfg: LeagueConfig, season: int = 2026) -> dict:
                                  for pos in SOS_POSITIONS if team in playoff_sos_rank.get(pos, {})},
             "vacated": vacated.get(team, {}),
             "redzone": redzone.get(team, {}),
+            "weapons": weapons.get(team, {}),
         }
     return {"season": season, "prior_season": prior, "teams": teams}
 

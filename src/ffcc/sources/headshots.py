@@ -39,6 +39,17 @@ def _thumb_url(url: str) -> str:
     return url.replace("/f_auto,q_auto/", f"/{TRANSFORM}/", 1) if "/f_auto,q_auto/" in url else url
 
 
+def thumb_url(url: str | None) -> str | None:
+    """The CDN URL for a face thumbnail, safe to hand the browser directly.
+
+    nflverse rotates a player's headshot URL every time his photo is reshot
+    (a trade, a new uniform), so the disk cache goes stale between snapshots.
+    The board still renders the local file when it has one; this is what the
+    frontend falls back to when it doesn't and the machine is online.
+    """
+    return _thumb_url(url) if url else None
+
+
 def cache_all(urls, workers: int = 8) -> dict[str, str]:
     """Download any missing headshots. Returns url -> local filename."""
     DIR.mkdir(parents=True, exist_ok=True)

@@ -8,12 +8,13 @@ import sys
 
 def cmd_serve(args):
     import uvicorn
-    from .engine import build_board
     from .web import app as webapp
 
     print("Building board (first run pulls and caches ~25MB)...")
-    webapp.BOARD = build_board()
-    print(webapp.BOARD.report.summary())
+    # Go through board(), not build_board(): assigning BOARD directly skips the
+    # journal replay, so a restart mid-draft came up with an empty board and
+    # every pick already entered was lost from the UI.
+    print(webapp.board().report.summary())
     print(f"\n  →  http://127.0.0.1:{args.port}\n")
     uvicorn.run(webapp.app, host=args.host, port=args.port, log_level="warning")
 

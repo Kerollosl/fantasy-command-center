@@ -170,6 +170,7 @@ def _attach_bio(players, season: int) -> None:
         if not rec:
             continue
         p.headshot = headshots.local_name(rec["headshot"]) or None
+        p.headshot_url = headshots.thumb_url(rec["headshot"])
         p.birth_date = rec["birth_date"]
         if rec["birth_date"] and not p.age:
             try:

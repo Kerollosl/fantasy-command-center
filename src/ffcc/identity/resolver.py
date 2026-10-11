@@ -57,6 +57,7 @@ class Player:
     seasons: list = field(default_factory=list)
     adjustments: list = field(default_factory=list)
     headshot: str | None = None
+    headshot_url: str | None = None   # live CDN thumbnail -- fallback when the local cache is stale
     birth_date: str | None = None
     team_logo: str | None = None
 
@@ -84,6 +85,13 @@ class Player:
     vacated_departed: list = field(default_factory=list)
     redzone_share: float | None = None     # 0-1, share of his team's red-zone touches last season
     redzone_touches: int | None = None
+
+    # QB only, filled in by context.attach.attach_context -- pass-game weapons
+    # this team added and lost since last season (display only, no proj input).
+    weapons_added: list = field(default_factory=list)
+    weapons_lost: list = field(default_factory=list)
+    weapons_added_total: int | None = None
+    weapons_lost_total: int | None = None
 
     # career durability, filled in by context.attach.attach_context -- display
     # only, never a proj_points input (baseline_projection already discounts

@@ -29,19 +29,20 @@ class P:
 
 
 def test_horizon_skips_back_to_back_picks_at_the_turn():
-    cfg = cfg_at_slot(1)         # slot 1 -> picks 24 and 25 are consecutive
+    cfg = cfg_at_slot(1)         # slot 1 -> the round 2/3 turn is consecutive
+    turn = 2 * cfg.teams         # 24 in a 12-team league, 28 in a 14
     st = DraftState(cfg)
-    for i in range(23):
+    for i in range(turn - 1):
         st.record(P(f"k{i}", f"p{i}", "RB"))
-    assert st.current_pick == 24
-    assert st.next_pick_for(cfg.my_draft_slot, after=24) == 25   # the trap
-    assert _decision_horizon(st, cfg, 24) == 48                  # the real horizon
+    assert st.current_pick == turn
+    assert st.next_pick_for(cfg.my_draft_slot, after=turn) == turn + 1  # the trap
+    assert _decision_horizon(st, cfg, turn) == 4 * cfg.teams      # the real horizon
 
 
 def test_horizon_is_the_next_pick_when_not_at_the_turn():
     cfg = cfg_at_slot(1)
     st = DraftState(cfg)
-    assert _decision_horizon(st, cfg, 1) == 24
+    assert _decision_horizon(st, cfg, 1) == 2 * cfg.teams
 
 
 def test_horizon_is_none_when_draft_is_over():

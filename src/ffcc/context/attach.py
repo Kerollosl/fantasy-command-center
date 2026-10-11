@@ -112,6 +112,14 @@ def attach_context(players, ctx: dict) -> None:
                             f"({rz['touches']}): {(factor - 1) * 100:+.0f}%",
                 })
 
+        if p.position == "QB":
+            wp = t.get("weapons") or {}
+            if wp.get("added") or wp.get("lost"):
+                p.weapons_added = wp.get("added") or []
+                p.weapons_lost = wp.get("lost") or []
+                p.weapons_added_total = wp.get("added_total")
+                p.weapons_lost_total = wp.get("lost_total")
+
         durability, seasons_n = _durability(p.seasons)
         if durability is not None:
             p.durability = durability

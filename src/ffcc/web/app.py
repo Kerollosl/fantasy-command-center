@@ -16,7 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field, StrictInt
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
-from ..draft.grade import grade_all, pick_values
+from ..draft.grade import grade_all, pick_report, pick_values
 from ..draft.lineup import optimal_lineup
 from ..draft.needs import starter_gaps
 from ..draft.recommend import _decision_horizon, recommend
@@ -91,7 +91,8 @@ def _player_json(p, b, surv=None):
         "adp": p.adp, "bye": p.bye, "proj": p.proj_points, "vor": p.vor,
         "tier": p.tier, "injury": p.injury_status,
         "depth": p.depth_chart_order, "survival": surv,
-        "age": p.age, "headshot": p.headshot, "team_logo": p.team_logo,
+        "age": p.age, "headshot": p.headshot, "headshot_url": p.headshot_url,
+        "team_logo": p.team_logo,
         "predicted_rank": p.predicted_rank, "last_year_rank": p.last_year_rank,
         "predicted_rank_overall": p.predicted_rank_overall,
         "last_year_rank_overall": p.last_year_rank_overall,
@@ -173,6 +174,7 @@ def _grid(state, cfg):
             pick = by_overall.get(overall)
             row[slot - 1] = {
                 "overall": overall, "slot": slot,
+                "key": pick.player_key if pick else None,
                 "name": pick.player_name if pick else None,
                 "pos": pick.position if pick else None,
                 "mine": slot == cfg.my_draft_slot,
@@ -262,8 +264,8 @@ def _compute_snapshot():
             "key": r.player.key, "score": r.score, "vona": r.vona,
             "survival": r.survival_next, "adp": r.player.adp, "tier": r.player.tier,
             "reasons": r.reasons, "warnings": r.warnings,
-            "headshot": r.player.headshot, "age": r.player.age,
-            "team_logo": r.player.team_logo,
+            "headshot": r.player.headshot, "headshot_url": r.player.headshot_url,
+            "age": r.player.age, "team_logo": r.player.team_logo,
             "value_share": shares.get(r.player.key),
             "pick_prob": round(o.probability, 4) if o else None,
             "prob_low": round(o.low, 4) if o else None,
@@ -330,9 +332,22 @@ def _compute_snapshot():
     }
 
 
+def _asset_version() -> str:
+    """Newest mtime across the static assets, as a cache-busting token.
+
+    Without it a browser that has the page open across a restart keeps running
+    the old app.js -- on draft day that means a tool that silently disagrees
+    with its own backend.
+    """
+    static = HERE / "static"
+    newest = max((f.stat().st_mtime for f in static.glob("*.*")), default=0.0)
+    return str(int(newest))
+
+
 @app.get("/", response_class=HTMLResponse)
 def index():
-    return (HERE / "templates" / "index.html").read_text()
+    page = (HERE / "templates" / "index.html").read_text()
+    return page.replace("__ASSETV__", _asset_version())
 
 
 @app.get("/api/state")
@@ -377,6 +392,18 @@ def recap():
     }
 
 
+def _pick_for(st, b, cfg, key: str) -> dict | None:
+    """The pick that took this player, judged -- or None if he is still there.
+
+    A player is drafted at most once, so his key identifies the pick without
+    the caller having to know its overall number.
+    """
+    made = next((pk for pk in st.picks if pk.player_key == key), None)
+    if not made:
+        return None
+    return pick_report(st, b.players, cfg, made.overall)
+
+
 @app.get("/api/player/{key:path}")
 @synchronized
 def player_profile(key: str):
@@ -397,7 +424,8 @@ def player_profile(key: str):
         "ok": True,
         "key": p.key, "name": p.name, "pos": p.position, "team": p.team,
         "age": p.age, "bye": p.bye, "adp": p.adp, "tier": p.tier,
-        "headshot": p.headshot, "team_logo": p.team_logo, "injury": p.injury_status,
+        "headshot": p.headshot, "headshot_url": p.headshot_url,
+        "team_logo": p.team_logo, "injury": p.injury_status,
         "depth": p.depth_chart_order, "years_exp": p.years_exp,
         "proj": p.proj_points, "vor": p.vor,
         "proj_market": p.proj_market, "proj_baseline": p.proj_baseline,
@@ -411,9 +439,13 @@ def player_profile(key: str):
         "playoff_sos_rank": p.playoff_sos_rank, "playoff_sos_score": p.playoff_sos_score,
         "vacated_share": p.vacated_share, "vacated_departed": p.vacated_departed,
         "redzone_share": p.redzone_share, "redzone_touches": p.redzone_touches,
+        "weapons_added": p.weapons_added, "weapons_lost": p.weapons_lost,
+        "weapons_added_total": p.weapons_added_total,
+        "weapons_lost_total": p.weapons_lost_total,
         "durability": p.durability, "durability_seasons": p.durability_seasons,
         "handcuff_key": p.handcuff_key, "handcuff_name": p.handcuff_name,
         "drafted": p.key in st.drafted_keys(),
+        "pick": _pick_for(st, b, cfg, p.key),
         "survival": (survival_prob(p, horizon, st.current_pick, hazards)
                      if horizon and p.key not in st.drafted_keys() else None),
         "horizon": horizon,

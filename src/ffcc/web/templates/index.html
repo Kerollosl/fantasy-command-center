@@ -4,7 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Fantasy Command Center</title>
-<link rel="stylesheet" href="/static/style.css">
+<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/static/style.css?v=__ASSETV__">
 </head>
 <body>
   <header class="top">
@@ -13,12 +14,12 @@
       <select id="slot" aria-label="Which draft slot are you?"></select>
       <span>Your slot</span>
     </label>
-    <div class="stat"><b id="pickno" class="tnum">—</b><span>Pick</span></div>
-    <div class="stat"><b id="rnd" class="tnum">—</b><span>Round</span></div>
-    <div class="stat"><b id="clock">—</b><span>On the clock</span></div>
-    <div class="stat hi"><b id="mynext" class="tnum">—</b><span>My next pick</span></div>
-    <div class="stat"><b id="until" class="tnum">—</b><span>Picks away</span></div>
-    <div class="clockchip" id="turn"><span class="dot"></span><span id="turntext">Loading</span></div>
+    <div class="stat pickstat"><b id="pickno" class="tnum">—</b><span>Pick</span></div>
+    <div class="stat roundstat"><b id="rnd" class="tnum">—</b><span>Round</span></div>
+    <div class="stat clockstat"><b id="clock">—</b><span>On the clock</span></div>
+    <div class="stat hi mynextstat"><b id="mynext" class="tnum">—</b><span>My next pick</span></div>
+    <div class="stat untilstat"><b id="until" class="tnum">—</b><span>Picks away</span></div>
+    <div class="clockchip" id="turn" aria-live="polite" aria-atomic="true"><span class="dot"></span><span id="turntext">Loading</span></div>
   </header>
 
   <div class="cmd">
@@ -35,7 +36,7 @@
   <div class="ticker" id="ticker" aria-label="Recent picks" hidden></div>
 
   <main class="wrap" id="mainview">
-    <div class="col">
+    <aside class="col decisioncol" aria-label="Draft recommendation">
       <section>
         <h2>Your move <span class="tag">click a player for their full record</span></h2>
         <div class="roundtip" id="roundtip"></div>
@@ -43,9 +44,9 @@
         <div id="compare" class="compare"></div>
         <div id="recs"></div>
       </section>
-    </div>
+    </aside>
 
-    <div class="col">
+    <section class="col boardcol" aria-label="Available players">
       <section>
         <h2>Positional scarcity <span class="tag">how many are left before the value falls off</span></h2>
         <div class="ladder" id="ladder"></div>
@@ -72,9 +73,9 @@
           </table>
         </div>
       </section>
-    </div>
+    </section>
 
-    <div class="col">
+    <aside class="col contextcol" aria-label="Roster and draft context">
       <section>
         <h2>My roster <span class="tag" id="mypicks"></span></h2>
         <div class="shapewrap" id="shape"></div>
@@ -93,7 +94,7 @@
         <p class="note" id="conf"></p>
         <div id="grades"></div>
       </section>
-    </div>
+    </aside>
   </main>
 
   <div class="gridview" id="gridview" hidden>
@@ -108,6 +109,6 @@
   </footer>
 
   <div class="toasts" id="toasts" aria-live="polite"></div>
-<script src="/static/app.js"></script>
+<script src="/static/app.js?v=__ASSETV__"></script>
 </body>
 </html>

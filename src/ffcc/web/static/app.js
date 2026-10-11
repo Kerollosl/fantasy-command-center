@@ -253,6 +253,9 @@ document.addEventListener("click", (e) => {
 document.addEventListener("click", (e) => {
   const blk = e.target.closest(".ladderblk");
   if (blk && blk.dataset.key) openProfile(blk.dataset.key);
+  // Draft-grid cells are real buttons, so Enter and Space come free.
+  const cell = e.target.closest(".dg .cell[data-key]");
+  if (cell) openProfile(cell.dataset.key);
 });
 document.addEventListener("keydown", (e) => {
   if (e.key !== "Enter" && e.key !== " ") return;
@@ -284,11 +287,34 @@ function positionSparkTip(tip, dotEl) {
   tip.style.top = top + "px";
 }
 
-function face(shot, name, size = 38, prefix = "/headshots/") {
+function face(shot, name, size = 38, prefix = "/headshots/", remote = "") {
   const initials = String(name || "").split(/\s+/).slice(0, 2).map((w) => w[0] || "").join("");
-  return shot
-    ? `<img class="face" src="${prefix}${esc(shot)}" width="${size}" height="${size}" alt="" loading="lazy">`
-    : `<span class="face blank" style="width:${size}px;height:${size}px">${esc(initials)}</span>`;
+  const blank = `<span class="face blank" style="width:${size}px;height:${size}px">${esc(initials)}</span>`;
+  // Local cache first; the live CDN URL as a fallback for when nflverse has
+  // rotated a player's headshot since the last snapshot (a trade, a new
+  // uniform) and the cached file no longer matches. faceFail walks
+  // local -> remote -> initials as each source 404s or the machine is offline.
+  const src = shot ? `${prefix}${shot}` : remote;
+  if (!src) return blank;
+  return `<img class="face" src="${esc(src)}" data-remote="${shot ? esc(remote) : ""}"
+    data-ini="${esc(initials)}" width="${size}" height="${size}" alt=""
+    loading="lazy" onerror="faceFail(this)">`;
+}
+
+// Broken image -> try the CDN copy once, then fall back to the initials chip.
+function faceFail(img) {
+  const remote = img.dataset.remote;
+  if (remote && img.getAttribute("src") !== remote) {
+    img.dataset.remote = "";
+    img.setAttribute("src", remote);
+    return;
+  }
+  const s = document.createElement("span");
+  s.className = "face blank";
+  s.style.width = img.getAttribute("width") + "px";
+  s.style.height = img.getAttribute("height") + "px";
+  s.textContent = img.dataset.ini || "";
+  img.replaceWith(s);
 }
 
 // A defense has no player photo -- its team logo IS its identity, so it takes
@@ -296,7 +322,7 @@ function face(shot, name, size = 38, prefix = "/headshots/") {
 function avatar(p, size = 38) {
   return p.pos === "DEF"
     ? face(p.team_logo, p.team, size, "/logos/")
-    : face(p.headshot, p.name, size);
+    : face(p.headshot, p.name, size, "/headshots/", p.headshot_url || "");
 }
 
 function ordinal(n) {
@@ -328,6 +354,31 @@ function ctxToneUp(value, goodAt) {
 // backend already scopes which fields get filled in).
 function contextCard(d) {
   const rows = [];
+
+  // QB only: is the supporting cast better or worse than the year his tape is
+  // from. WR/RB/TE get this from the other direction via vacated share.
+  if ((d.weapons_added || []).length || (d.weapons_lost || []).length) {
+    const name = (w) => {
+      if (w.rookie) return `${esc(w.name)} <span class="mut">(rookie, R${w.round})</span>`;
+      const detail = w.from ? `from ${esc(w.from)}`
+        : w.still_in_league === false ? `${w.targets} tgt · left NFL`
+        : `${w.targets} tgt`;
+      return `${esc(w.name)} <span class="mut">(${w.pos}, ${detail})</span>`;
+    };
+    const more = (shown, total) => total > shown.length ? ` +${total - shown.length} more` : "";
+    if ((d.weapons_lost || []).length) {
+      rows.push(`
+        <div class="pfrow"><span>Weapons lost since last season</span>
+          <b style="color:var(--critical)">−${d.weapons_lost_total}</b></div>
+        <p class="pfctxnote">${d.weapons_lost.map(name).join(", ")}${more(d.weapons_lost, d.weapons_lost_total)}</p>`);
+    }
+    if ((d.weapons_added || []).length) {
+      rows.push(`
+        <div class="pfrow"><span>Weapons added since last season</span>
+          <b style="color:var(--good)">+${d.weapons_added_total}</b></div>
+        <p class="pfctxnote">${d.weapons_added.map(name).join(", ")}${more(d.weapons_added, d.weapons_added_total)}</p>`);
+    }
+  }
 
   if (d.oline_rank != null) {
     const tone = ctxTone(d.oline_rank, true, 10, 23);
@@ -436,6 +487,62 @@ function armModal(label) {
   panel.addEventListener("keydown", modalTrap);
 }
 
+// How a pick that has already been made actually turned out, by this board's
+// own numbers. Only ever rendered for a drafted player -- for anyone still
+// available there is no pick to judge.
+function pickCard(d) {
+  const k = d.pick;
+  if (!k) return "";
+  const who = k.mine ? "You" : `Team ${k.slot}`;
+  const label = `${k.round}.${String(k.pick_in_round).padStart(2, "0")}`;
+
+  // Value above slot is the headline, but it is only comparable to picks made
+  // nearby -- so the letter and the rank both say what they were measured
+  // against, rather than implying a league-wide scale.
+  const rows = [
+    `<div class="pfrow"><span>Value above what pick ${k.overall} usually returns</span>
+      <b class="${k.value > 0 ? "up" : k.value < 0 ? "down" : ""}">${signed(k.value)} pts</b></div>`,
+    `<div class="pfrow"><span>That slot normally returns</span><b>${k.expected_vor}</b></div>`,
+    `<div class="pfrow"><span>He returned</span><b>${k.vor}</b></div>`,
+    `<div class="pfrow"><span>Rank among round ${k.round}'s picks</span>
+      <b>${k.rank}${ordinal(k.rank)} of ${k.of}</b></div>`,
+  ];
+  if (k.adp_delta != null) {
+    // Positive means he lasted past his ADP -- taken later than the market
+    // said, which is the good direction for whoever made the pick.
+    const fell = k.adp_delta > 0;
+    const picks = Math.round(Math.abs(k.adp_delta));
+    rows.push(`<div class="pfrow"><span>Against his ADP of ${k.adp}</span>
+      <b class="${picks < 6 ? "" : fell ? "up" : "down"}">${
+        picks < 1 ? "right on it"
+        : fell ? `fell ${picks} pick${picks === 1 ? "" : "s"}`
+        : `${picks} pick${picks === 1 ? "" : "s"} early`
+      }</b></div>`);
+  }
+  rows.push(`<div class="pfrow"><span>${k.pos_rank}${ordinal(k.pos_rank)} ${d.pos} off the board</span>
+    <b>${d.pos}${k.pos_rank}</b></div>`);
+
+  // The decision, as opposed to the outcome: was anyone left worth more.
+  const verdict = k.took_best
+    ? `<p class="pickverdict good">Nothing better was left — the highest-value player on the board.</p>`
+    : `<p class="pickverdict">Left ${Math.abs(k.left_on_board)} pts on the board:
+        <a href="#" class="passedlink" data-key="${esc(k.best_available.key)}">${esc(k.best_available.name)}</a>
+        <span class="mut">(${k.best_available.pos}, ${k.best_available.vor})</span> was still there.</p>`;
+
+  return `
+    <div class="pickcard grade-${k.letter.replace("+", "p").replace("-", "m")}">
+      <div class="pickhead">
+        <div class="pickgrade" title="Graded against the ${k.compared_to} picks made in rounds ${Math.max(1, k.round - 1)}–${k.round + 1}">${k.letter}</div>
+        <div>
+          <div class="picklabel">${who} · pick ${label}</div>
+          <div class="picksub">${k.overall} overall · graded against picks made around it</div>
+        </div>
+      </div>
+      ${rows.join("")}
+      ${verdict}
+    </div>`;
+}
+
 async function openProfile(key) {
   const d = await api("/api/player/" + encodeURIComponent(key));
   if (!d.ok) return;
@@ -489,10 +596,10 @@ async function openProfile(key) {
         </div>
       </div>
 
-      ${d.drafted
-        ? `<div class="pfdrafted">Already drafted</div>`
-        : `<button class="pfdraft" id="pfdraft">Draft ${esc(d.name)}</button>`}
+      ${d.drafted && !d.pick ? `<div class="pfdrafted">Already drafted</div>` : ""}
+      ${d.drafted ? "" : `<button class="pfdraft" id="pfdraft">Draft ${esc(d.name)}</button>`}
 
+      ${pickCard(d)}
       ${contextCard(d)}
       ${riskCard(d)}
 
@@ -535,6 +642,8 @@ async function openProfile(key) {
   if (draftBtn) draftBtn.onclick = () => { closeProfile(); draft(d.key); };
   const handcuff = panel.querySelector(".handcufflink");
   if (handcuff) handcuff.onclick = (e) => { e.preventDefault(); openProfile(handcuff.dataset.key); };
+  const passed = panel.querySelector(".passedlink");
+  if (passed) passed.onclick = (e) => { e.preventDefault(); openProfile(passed.dataset.key); };
   armModal(`${d.name} — player profile`);
 }
 
@@ -779,6 +888,8 @@ document.addEventListener("keydown", (e) => {
 function render() {
   if (!S) return;
   $("league").textContent = "· " + S.league;
+  document.querySelector(".top").classList.toggle("myturn", S.is_my_turn);
+  document.querySelector(".cmd").classList.toggle("myturn", S.is_my_turn);
 
   const sel = $("slot");
   if (sel.options.length !== S.teams) {
@@ -794,7 +905,11 @@ function render() {
   $("rnd").textContent = S.round;
   $("clock").textContent = S.complete ? "Done" : `Team ${S.on_clock}`;
   $("recapbtn").classList.toggle("done", S.complete);
-  $("mynext").textContent = S.my_next_pick ?? "—";
+  // `my_next_pick` intentionally looks past the current pick for the model's
+  // survival horizon. The header is a live control surface, so it must show
+  // the pick happening now when this team is already on the clock.
+  const nextVisiblePick = S.is_my_turn ? S.current_pick : S.my_next_pick;
+  $("mynext").textContent = nextVisiblePick ?? "—";
   $("until").textContent = S.is_my_turn ? "Now" : S.picks_until_mine;
 
   const chip = $("turn");
@@ -845,10 +960,10 @@ function renderHero() {
       ${S.disagreement ? `<div class="disagree">${esc(S.disagreement)}</div>` : ""}
       <div class="why">
         <div class="metric"><b class="tnum">${signed(top.vona)}</b>
-          <span>points you'd lose by waiting — the next ${top.pos} you'd realistically
-          get projects that much lower</span></div>
+          <span><strong>Wait cost</strong> points you would lose before the next ${top.pos}
+          you could realistically draft</span></div>
         <div class="metric"><b class="tnum">${pct(top.survival)}%</b>
-          <span>chance he is still there at pick ${hz ?? "—"}${
+          <span><strong>Still there</strong> at pick ${hz ?? "—"}${
             hz && S.my_next_pick && hz !== S.my_next_pick
               ? ` <span class="dim">(you also pick at ${S.my_next_pick})</span>` : ""}</span></div>
         ${top.warnings.length ? `<ul class="reasons">
@@ -874,8 +989,8 @@ function renderHero() {
   // to be readable without hovering, since a bare "sim"/"value" pairing was
   // reported confusing and a tooltip alone wasn't fixing that.
   $("compare").innerHTML = `
-    <p class="cmplegend"><b>Best</b> = wins the simulated draft most often ·
-      <b>Model</b> = this tool's raw value ranking, before simulating anything</p>
+    <div class="cmplegend"><b>Shortlist</b><span><b>Best</b> simulated outcome ·
+      <b>Model</b> raw value</span></div>
     ${top4.map((r, i) => {
       const sim = r.pick_prob, val = r.value_share;
       const simLeads = sim != null && val != null && sim >= val;
@@ -1065,7 +1180,7 @@ function renderRoster() {
   $("roster").innerHTML = me && me.roster.length
     ? me.roster.map((p) => `<div class="slot"><span class="n">${p.overall}</span>
         <span class="pos ${p.pos}">${p.pos}</span><span>${esc(p.name)}</span></div>`).join("")
-    : `<div class="empty-state">Nothing drafted yet.<br>Your first pick is #${S.my_next_pick ?? "—"}.</div>`;
+    : `<div class="empty-state">Nothing drafted yet.<br>Your first pick is #${S.is_my_turn ? S.current_pick : (S.my_next_pick ?? "—")}.</div>`;
 
   const needs = Object.entries(S.needs || {}).filter(([, v]) => v > 0);
   $("needs").innerHTML = needs.length
@@ -1158,8 +1273,12 @@ function renderGrid() {
     const cells = row.map((c) => {
       const mine = c.mine ? " mycol" : "";
       if (c.name) {
-        return `<td class="${mine.trim()}"><span class="cell filled ${c.pos}">
-          <span class="cp">${c.pos}</span><span class="cn">${esc(c.name)}</span></span></td>`;
+        // Every filled cell is a button: the board is the natural place to ask
+        // "what was that pick worth", so clicking one opens that player with
+        // his pick already judged.
+        return `<td class="${mine.trim()}"><button type="button" class="cell filled ${c.pos}"
+          data-key="${esc(c.key)}" title="${esc(c.name)} — see this pick graded">
+          <span class="cp">${c.pos}</span><span class="cn">${esc(c.name)}</span></button></td>`;
       }
       const now = c.overall === S.current_pick;
       // Round.pick reads the way drafters actually talk about picks.

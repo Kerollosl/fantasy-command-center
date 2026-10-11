@@ -16,6 +16,7 @@ data/aging.json
 data/round_value.json
 data/context.json
 data/draft_journal.jsonl
+data/drafts/
 data/*.db
 data/*.sqlite
 config/secrets.yaml
@@ -37,6 +38,7 @@ __pycache__/
 .venv/
 node_modules/
 playwright-report/
+.playwright-cli/
 *.cookies.json
 .auth/
 .ipynb_checkpoints/

@@ -187,3 +187,147 @@ def pick_values(state, players, cfg: LeagueConfig, slot: int) -> list[dict]:
             "expected_vor": round(expected, 1), "value": round(p.vor - expected, 1),
         })
     return out
+
+
+# Letter cutoffs in standard deviations above the picks made around this one.
+# Deliberately coarse: the underlying value estimate is not precise enough to
+# separate a B+ from a B, and pretending otherwise is the thing this module
+# exists to avoid. Fixed cutoffs rather than a forced curve, so a round where
+# everyone drafted sensibly does not have to produce an F.
+PICK_LETTERS = (
+    (1.50, "A+"), (1.10, "A"), (0.75, "A-"), (0.40, "B+"), (0.10, "B"),
+    (-0.20, "B-"), (-0.50, "C+"), (-0.85, "C"), (-1.20, "C-"), (-1.60, "D"),
+)
+
+# Rounds either side of a pick that count as "around here". Three rounds is
+# enough sample to make a standard deviation mean something without reaching
+# into a part of the draft that plays by different rules.
+PICK_WINDOW = 1
+
+
+def _letter_index(letter: str) -> int:
+    """Position of a letter on the scale; lower is better."""
+    for i, (_, name) in enumerate(PICK_LETTERS):
+        if name == letter:
+            return i
+    return len(PICK_LETTERS)
+
+
+def _pick_letter(z: float) -> str:
+    for floor, letter in PICK_LETTERS:
+        if z >= floor:
+            return letter
+    return "F"
+
+
+def pick_report(state, players, cfg: LeagueConfig, overall: int) -> dict | None:
+    """One pick, judged.
+
+    The same value-above-slot the team grade aggregates, but for a single
+    selection, plus the two things you actually want to know afterwards: how
+    it ranks against every other pick in this draft, and who was still on the
+    board when it was made.
+
+    The letter grades a pick against the picks made around it, not against
+    the whole draft. Value-above-slot is not comparable across rounds: the
+    VOR curve is steep early and flat late, so late picks routinely post
+    larger deltas than a perfect round-1 pick can (in this league round 15
+    averages +64 and round 1 averages +9). Grading on the whole draft rates
+    a round-15 kicker above the second player off the board, which is not a
+    judgment anyone would defend. Within a three-round window the comparison
+    is fair, and an A means the same thing everywhere: you beat what picks
+    made around here actually returned.
+    """
+    by_key = {p.key: p for p in players}
+    made = {pk.overall: pk for pk in state.picks}
+    pk = made.get(overall)
+    if not pk:
+        return None
+    p = by_key.get(pk.player_key)
+    if not p:
+        return None
+
+    curve = _vor_curve(players)
+    values = {
+        o: by_key[q.player_key].vor - _expected_vor_at(curve, o)
+        for o, q in made.items()
+        if q.player_key in by_key
+    }
+    value = values[overall]
+    rnd = (overall - 1) // cfg.teams + 1
+
+    def _round_of(o: int) -> int:
+        return (o - 1) // cfg.teams + 1
+
+    # Comparison set: this round and its neighbours.
+    window = [v for o, v in values.items()
+              if abs(_round_of(o) - rnd) <= PICK_WINDOW]
+    arr = np.array(window, dtype=float)
+    sd = float(arr.std())
+    z = 0.0 if sd < 1e-9 else (value - float(arr.mean())) / sd
+    pct = 100.0 * sum(1 for v in window if v < value) / max(len(window), 1)
+
+    # Rank inside its own round -- the concrete version of the letter.
+    in_round = sorted(
+        (v for o, v in values.items() if _round_of(o) == rnd), reverse=True
+    )
+    rank = sum(1 for v in in_round if v > value) + 1
+
+    # The board as it stood the moment before this pick.
+    gone = {q.player_key for o, q in made.items() if o < overall}
+    open_then = [q for q in players if q.key not in gone and q.key != p.key]
+    best_then = max(open_then, key=lambda q: q.vor, default=None)
+    same_pos = [q for q in open_then if q.position == p.position]
+    best_pos_then = max(same_pos, key=lambda q: q.vor, default=None)
+    # Nth off the board at his position -- the scarcity read on the pick.
+    pos_rank = 1 + sum(
+        1 for o, q in made.items() if o < overall and q.position == p.position
+    )
+
+    # This player's VOR against the best one left behind. Negative is value
+    # left on the board; zero or positive means nobody available was worth
+    # more, and the margin says by how much he was the best pick on offer.
+    left = round(p.vor - best_then.vor, 1) if best_then else 0.0
+    took_best = left >= 0
+
+    # Value-above-slot cannot be positive at the very top of the draft: the
+    # curve at pick 1 IS the best player's VOR, so taking him scores exactly
+    # zero and every early pick reads as a reach. That is an artefact of the
+    # measuring stick, not a bad pick. Taking the best player on the board is
+    # the most this board can ask of a pick, so it floors the letter.
+    letter = _pick_letter(z)
+    if took_best and _letter_index("A") < _letter_index(letter):
+        letter = "A"
+
+    def _brief(q):
+        return None if q is None else {
+            "key": q.key, "name": q.name, "pos": q.position,
+            "vor": q.vor, "proj": q.proj_points,
+        }
+
+    return {
+        "overall": overall,
+        "slot": pk.team_slot,
+        "round": (overall - 1) // cfg.teams + 1,
+        "pick_in_round": (overall - 1) % cfg.teams + 1,
+        "mine": pk.team_slot == cfg.my_draft_slot,
+        "letter": letter,
+        "percentile": round(pct),
+        "z": round(z, 2),
+        "rank": rank,
+        "of": len(in_round),
+        "compared_to": len(window),
+        "value": round(value, 1),
+        "expected_vor": round(_expected_vor_at(curve, overall), 1),
+        "vor": p.vor,
+        "proj": p.proj_points,
+        "adp": p.adp,
+        # Positive = he lasted past his ADP, so you got him later than the
+        # market said you would. Negative = taken ahead of his ADP.
+        "adp_delta": round(overall - p.adp, 1) if p.adp is not None else None,
+        "pos_rank": pos_rank,
+        "left_on_board": left,
+        "took_best": took_best,
+        "best_available": _brief(best_then),
+        "best_at_position": _brief(best_pos_then),
+    }

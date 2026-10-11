@@ -21,6 +21,17 @@ CTX = {
                 "RB": {"share": 0.5, "departed": [{"name": "Departed Back", "share": 0.5}]},
             },
             "redzone": {"rb1-gsis": {"share": 0.5, "touches": 60}},
+            "weapons": {
+                "added": [
+                    {"name": "New Vet WR", "pos": "WR", "from": "KC", "targets": 90, "rec_yards": 800},
+                    {"name": "Rookie WR", "pos": "WR", "rookie": True, "pick": 12, "round": 1},
+                ],
+                "lost": [
+                    {"name": "Gone WR", "pos": "WR", "targets": 120, "rec_yards": 1100, "still_in_league": True},
+                ],
+                "added_total": 2,
+                "lost_total": 1,
+            },
         },
         "LV": {
             "oline": {"score": -1.4, "rank": 31},
@@ -124,6 +135,32 @@ def test_handcuffs_point_to_the_next_depth_slot_same_team():
     assert rb2.handcuff_name == "Third Back"
     assert rb3.handcuff_name is None
     assert other_team.handcuff_name is None
+
+
+def test_qb_weapons_delta_is_attached_display_only():
+    qb = make("Some QB", "QB", "DET", 320.0)
+    attach_context([qb], CTX)
+    assert [w["name"] for w in qb.weapons_added] == ["New Vet WR", "Rookie WR"]
+    assert qb.weapons_lost[0]["name"] == "Gone WR"
+    assert qb.weapons_added_total == 2
+    assert qb.weapons_lost_total == 1
+    # context, not a projection signal -- it contributes no adjustment entry
+    assert all(a["kind"] != "weapons" for a in qb.adjustments)
+
+
+def test_weapons_delta_only_applies_to_qb():
+    wr = make("Some WR", "WR", "DET", 200.0)
+    attach_context([wr], CTX)
+    assert wr.weapons_added == []
+    assert wr.weapons_lost == []
+    assert wr.weapons_added_total is None
+
+
+def test_qb_on_team_without_a_weapons_delta_stays_clean():
+    qb = make("Quiet QB", "QB", "LV", 300.0)
+    attach_context([qb], CTX)
+    assert qb.weapons_added == []
+    assert qb.weapons_lost == []
 
 
 def test_handcuffs_only_apply_to_rb():

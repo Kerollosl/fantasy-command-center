@@ -2,7 +2,7 @@
 
 A live fantasy football draft assistant. Enter every pick as it happens and it
 recalculates what you should do next, how likely each player is to survive to
-your next real decision, and a decomposed draft grade for all twelve teams.
+your next real decision, and a decomposed draft grade for every team in the league.
 
 Built on free, public data only — no paid API keys, no scraping.
 
@@ -173,7 +173,7 @@ behind the same interface if access arrives. The resolver already carries
 ## Honest limitations
 
 - **FFC ADP ignores league size.** `teams=10`, `12`, and `14` return identical
-  values — it's a pooled blend. For a non-12-team league, treat ADP as
+  values — it's a pooled blend. Away from 12 teams, treat ADP as
   approximate.
 - **Projections blend our model with the market, deliberately.** ADP is itself
   a crowd projection from thousands of drafts. Claiming to beat it outright

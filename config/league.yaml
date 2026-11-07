@@ -1,9 +1,9 @@
 # Your league. Every valuation number is derived from this file — nothing is hardcoded.
 name: "Main League"
-teams: 12
+teams: 14
 rounds: 15
 draft_type: snake
-my_draft_slot: 1  # 1-indexed. Set this from the picker in the header.
+my_draft_slot: 14  # 1-indexed. Set this from the picker in the header.
 
 # Starting lineup. Drives replacement level for VOR.
 roster:

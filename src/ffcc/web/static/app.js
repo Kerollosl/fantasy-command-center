@@ -789,9 +789,25 @@ async function refresh() {
 }
 
 // ── pick entry ────────────────────────────────────────────────
+// Debounced (~120ms) so each keystroke doesn't hit the server, and each
+// request carries a sequence number so a slow, older response can't overwrite
+// the results for what the user has typed since.
+let searchSeq = 0;
+let searchTimer = null;
+function scheduleSearch(q) {
+  clearTimeout(searchTimer);
+  if (!q.trim()) { searchSeq++; results = []; drawDrop(); return; }
+  searchTimer = setTimeout(() => search(q), 120);
+}
+
 async function search(q) {
+  const seq = ++searchSeq;
   if (!q.trim()) { results = []; drawDrop(); return; }
-  try { results = await api("/api/search?q=" + encodeURIComponent(q)); sel = 0; drawDrop(); }
+  try {
+    const r = await api("/api/search?q=" + encodeURIComponent(q));
+    if (seq !== searchSeq) return;   // a newer search superseded this one
+    results = r; sel = 0; drawDrop();
+  }
   catch { /* keep the last list rather than blanking mid-draft */ }
 }
 
@@ -816,7 +832,7 @@ async function draft(key) {
     });
     if (!r.ok) { $("status").textContent = r.error; toast(r.error, { kind: "err" }); return; }
     $("status").textContent = "";
-    $("q").value = ""; results = []; drawDrop();
+    $("q").value = ""; clearTimeout(searchTimer); searchSeq++; results = []; drawDrop();
     const p = r.pick || {};
     toast(`Recorded ${p.name ?? "pick"} — Team ${p.slot ?? "?"}, pick ${p.overall ?? "?"}`,
           { action: { label: "Undo", onClick: undoLast } });
@@ -838,12 +854,12 @@ async function undoLast() {
   refresh();
 }
 
-$("q").addEventListener("input", (e) => search(e.target.value));
+$("q").addEventListener("input", (e) => scheduleSearch(e.target.value));
 $("q").addEventListener("keydown", (e) => {
   if (e.key === "ArrowDown") { sel = Math.min(sel + 1, results.length - 1); drawDrop(); e.preventDefault(); }
   else if (e.key === "ArrowUp") { sel = Math.max(sel - 1, 0); drawDrop(); e.preventDefault(); }
   else if (e.key === "Enter" && results[sel]) { draft(results[sel].key); e.preventDefault(); }
-  else if (e.key === "Escape") { $("q").value = ""; results = []; drawDrop(); }
+  else if (e.key === "Escape") { $("q").value = ""; clearTimeout(searchTimer); searchSeq++; results = []; drawDrop(); }
 });
 $("undo").onclick = undoLast;
 $("recapbtn").onclick = openRecap;
@@ -1294,4 +1310,7 @@ function renderGrid() {
 }
 
 refresh();
-setInterval(refresh, 15000);   // safety net; every action refreshes immediately
+// Safety net; every action refreshes immediately. Skipped while the tab is
+// hidden, with a catch-up refresh as soon as it becomes visible again.
+setInterval(() => { if (!document.hidden) refresh(); }, 15000);
+document.addEventListener("visibilitychange", () => { if (!document.hidden) refresh(); });

@@ -59,21 +59,20 @@ with a confidence level, never a bare letter.
 ## Quick start
 
 ```bash
-uv venv --python 3.13
-uv pip install -e .
+uv sync --extra dev   # creates .venv from pyproject.toml + uv.lock
 
 # Pull and cache every source; verifies all draftable players resolve.
-ffcc snapshot
+uv run ffcc snapshot
 
 # Run the board
-ffcc serve          # → http://127.0.0.1:8000
+uv run ffcc serve          # → http://127.0.0.1:8000
 ```
 
-Run `ffcc snapshot` the morning of your draft. Everything is cached to disk,
+Run `uv run ffcc snapshot` the morning of your draft. Everything is cached to disk,
 so a network problem mid-draft degrades to stale data rather than a dead tool.
 
 ```bash
-ffcc board --pos RB --limit 30     # print the board to a terminal
+uv run ffcc board --pos RB --limit 30     # print the board to a terminal
 ```
 
 ## Picking your draft slot
@@ -188,7 +187,7 @@ behind the same interface if access arrives. The resolver already carries
 ## Development
 
 ```bash
-pytest -q
+uv run pytest -q
 ```
 
 31 tests cover snake-order and roster math, name normalization across sources,
